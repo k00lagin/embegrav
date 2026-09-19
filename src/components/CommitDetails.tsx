@@ -1,0 +1,595 @@
+import { useEffect, useMemo, useState } from 'react'
+import type {
+  ChangedFile,
+  CommitDetails as CommitDetailsData,
+  CompareDetails,
+  GraphData,
+  UncommittedDetails,
+} from '@shared/types'
+import { api } from '@/api'
+import { formatFullDate, shortHash } from '@/lib/format'
+import type { RepoActions } from '@/hooks/useRepoActions'
+import { ChangedFilesTree } from './ChangedFilesTree'
+import type { DiffTarget } from './DiffViewer'
+import type { MenuEntry } from './ContextMenu'
+import { useDialog } from './Dialog'
+import IconX from '~icons/lucide/x'
+import IconCopy from '~icons/lucide/copy'
+import IconPlus from '~icons/lucide/plus'
+import IconMinus from '~icons/lucide/minus'
+import IconEraser from '~icons/lucide/eraser'
+import IconArchive from '~icons/lucide/archive'
+import IconFileDiff from '~icons/lucide/file-diff'
+import IconLoader from '~icons/lucide/loader-circle'
+import IconGitCommit from '~icons/lucide/git-commit-horizontal'
+
+export type DetailsMode =
+  | { kind: 'commit'; hash: string }
+  | { kind: 'uncommitted' }
+  | { kind: 'compare'; from: string; to: string }
+
+/** row = info beside the file tree (inline expansion); column = info above the file tree (side panel) */
+export type DetailsLayout = 'row' | 'column'
+
+interface Props {
+  repo: string
+  mode: DetailsMode
+  data: GraphData
+  /** Bumped whenever the graph reloads, so details refresh too */
+  version: number
+  actions: RepoActions
+  layout?: DetailsLayout
+  onOpenDiff: (target: DiffTarget) => void
+  onSelectCommit: (hash: string) => void
+  onClose: () => void
+}
+
+export function CommitDetails(props: Props) {
+  const { mode, layout = 'row' } = props
+  return (
+    <div className="relative">
+      {layout === 'row' && (
+        <button
+          type="button"
+          className="icon-btn absolute top-1 right-1 z-10"
+          title="Close details"
+          onClick={props.onClose}
+        >
+          <IconX className="w-4 h-4" />
+        </button>
+      )}
+      {mode.kind === 'commit' && (
+        <CommitView key={mode.hash} {...props} layout={layout} hash={mode.hash} />
+      )}
+      {mode.kind === 'uncommitted' && <UncommittedView {...props} layout={layout} />}
+      {mode.kind === 'compare' && (
+        <CompareView
+          key={`${mode.from}..${mode.to}`}
+          {...props}
+          layout={layout}
+          from={mode.from}
+          to={mode.to}
+        />
+      )}
+    </div>
+  )
+}
+
+/** Shared class names for the two layouts. */
+function layoutClasses(layout: DetailsLayout) {
+  return layout === 'column'
+    ? {
+        wrap: 'flex flex-col',
+        info: 'p-3 border-b border-border',
+        files: 'flex-1 min-w-0 flex flex-col',
+        header: 'section-header !border-t-0',
+        treeRows: 40,
+      }
+    : {
+        wrap: 'flex min-h-[140px]',
+        info: 'w-[420px] shrink-0 p-3 border-r border-border overflow-x-hidden',
+        files: 'flex-1 min-w-0 flex flex-col',
+        header: 'section-header !border-t-0 pr-8',
+        treeRows: 16,
+      }
+}
+
+function useLoader<T>(
+  load: () => Promise<T>,
+  deps: unknown[],
+): { data: T | null; error: string | null; loading: boolean } {
+  const [state, setState] = useState<{ data: T | null; error: string | null; loading: boolean }>({
+    data: null,
+    error: null,
+    loading: true,
+  })
+  useEffect(() => {
+    let cancelled = false
+    setState((s) => ({ ...s, loading: true }))
+    load()
+      .then((data) => !cancelled && setState({ data, error: null, loading: false }))
+      .catch((e: Error) => !cancelled && setState({ data: null, error: e.message, loading: false }))
+    return () => {
+      cancelled = true
+    }
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, deps)
+  return state
+}
+
+function Loading() {
+  return (
+    <div className="p-3 text-fg-muted flex items-center gap-2">
+      <IconLoader className="animate-spin" /> Loading…
+    </div>
+  )
+}
+
+function ErrorBox({ message }: { message: string }) {
+  return <div className="p-3 text-danger whitespace-pre-wrap">{message}</div>
+}
+
+function Person({ name, email }: { name: string; email: string }) {
+  return (
+    <span>
+      {name} {email && <span className="text-fg-muted">&lt;{email}&gt;</span>}
+    </span>
+  )
+}
+
+// ---------------------------------------------------------------------------
+
+function CommitView({
+  repo,
+  hash,
+  data,
+  version,
+  actions,
+  onOpenDiff,
+  onSelectCommit,
+  layout,
+}: Props & { hash: string; layout: DetailsLayout }) {
+  const state = useLoader<CommitDetailsData>(() => api.commit(repo, hash), [repo, hash, version])
+  const d = state.data
+  const refsHere = useMemo(() => data.refs.filter((r) => r.hash === hash), [data.refs, hash])
+  const cls = layoutClasses(layout)
+  if (state.error) return <ErrorBox message={state.error} />
+  if (!d) return <Loading />
+  const from = d.parents[0] ?? 'EMPTY'
+  return (
+    <div className={cls.wrap}>
+      <div className={cls.info}>
+        <table className="kv-table">
+          <tbody>
+            <tr>
+              <td>Commit</td>
+              <td className="mono">
+                {d.hash}{' '}
+                <button
+                  type="button"
+                  className="icon-btn !w-5 !h-5 align-middle"
+                  title="Copy hash"
+                  onClick={() => void actions.copy(d.hash, 'Commit hash')}
+                >
+                  <IconCopy className="w-3 h-3" />
+                </button>
+              </td>
+            </tr>
+            <tr>
+              <td>Parents</td>
+              <td className="mono">
+                {d.parents.length === 0 && <span className="text-fg-dim">(root commit)</span>}
+                {d.parents.map((p) => (
+                  <button
+                    key={p}
+                    type="button"
+                    className="text-link hover:underline mr-2"
+                    onClick={() => onSelectCommit(p)}
+                    title="Select parent commit"
+                  >
+                    {shortHash(p)}
+                  </button>
+                ))}
+              </td>
+            </tr>
+            <tr>
+              <td>Author</td>
+              <td>
+                <Person name={d.author} email={d.email} />
+              </td>
+            </tr>
+            <tr>
+              <td>Date</td>
+              <td>{formatFullDate(d.date)}</td>
+            </tr>
+            {(d.committer !== d.author ||
+              d.committerEmail !== d.email ||
+              d.commitDate !== d.date) && (
+              <>
+                <tr>
+                  <td>Committer</td>
+                  <td>
+                    <Person name={d.committer} email={d.committerEmail} />
+                  </td>
+                </tr>
+                <tr>
+                  <td>Commit date</td>
+                  <td>{formatFullDate(d.commitDate)}</td>
+                </tr>
+              </>
+            )}
+            {refsHere.length > 0 && (
+              <tr>
+                <td>Refs</td>
+                <td className="whitespace-normal">
+                  {refsHere.map((r) => (
+                    <span key={r.type + r.name} className="badge mr-1 mb-1 font-normal">
+                      {r.name}
+                    </span>
+                  ))}
+                </td>
+              </tr>
+            )}
+          </tbody>
+        </table>
+        <div className="mt-2 whitespace-pre-wrap break-words">
+          <div className="font-semibold">{d.subject}</div>
+          {d.body && <div className="mt-1 text-fg-muted">{d.body}</div>}
+        </div>
+      </div>
+      <div className={cls.files}>
+        <div className={cls.header}>
+          <IconFileDiff className="w-3.5 h-3.5" />
+          <span>Changed files</span>
+          <span className="badge">{d.files.length}</span>
+        </div>
+        <div className="p-1">
+          <ChangedFilesTree
+            files={d.files}
+            maxRows={cls.treeRows}
+            emptyText="No file changes in this commit"
+            onOpenFile={(file) =>
+              onOpenDiff({
+                file,
+                from,
+                to: d.hash,
+                label: `${shortHash(from)} → ${shortHash(d.hash)}`,
+              })
+            }
+          />
+        </div>
+      </div>
+    </div>
+  )
+}
+
+// ---------------------------------------------------------------------------
+
+function CompareView({
+  repo,
+  from,
+  to,
+  version,
+  onOpenDiff,
+  layout,
+}: Props & { from: string; to: string; layout: DetailsLayout }) {
+  const state = useLoader<CompareDetails>(
+    () => api.compare(repo, from, to),
+    [repo, from, to, version],
+  )
+  const cls = layoutClasses(layout)
+  if (state.error) return <ErrorBox message={state.error} />
+  if (!state.data) return <Loading />
+  const files = state.data.files
+  return (
+    <div className={cls.wrap}>
+      <div className={cls.info}>
+        <div className="font-semibold mb-1">Comparing commits</div>
+        <table className="kv-table">
+          <tbody>
+            <tr>
+              <td>From</td>
+              <td className="mono">{from}</td>
+            </tr>
+            <tr>
+              <td>To</td>
+              <td className="mono">{to}</td>
+            </tr>
+          </tbody>
+        </table>
+        <div className="text-fg-dim text-xs mt-2">
+          Ctrl/Cmd+click another commit to change the comparison, or click a commit to select it
+          alone.
+        </div>
+      </div>
+      <div className={cls.files}>
+        <div className={cls.header}>
+          <IconFileDiff className="w-3.5 h-3.5" />
+          <span>Changed files</span>
+          <span className="badge">{files.length}</span>
+        </div>
+        <div className="p-1">
+          <ChangedFilesTree
+            files={files}
+            maxRows={cls.treeRows}
+            emptyText="No differences"
+            onOpenFile={(file) =>
+              onOpenDiff({ file, from, to, label: `${shortHash(from)} → ${shortHash(to)}` })
+            }
+          />
+        </div>
+      </div>
+    </div>
+  )
+}
+
+// ---------------------------------------------------------------------------
+
+function UncommittedView({
+  repo,
+  data,
+  version,
+  actions,
+  onOpenDiff,
+  layout,
+}: Props & { layout: DetailsLayout }) {
+  const state = useLoader<UncommittedDetails>(() => api.uncommitted(repo), [repo, version])
+  const cls = layoutClasses(layout)
+  const treeRows = layout === 'column' ? 20 : 10
+  const dialog = useDialog()
+  const [message, setMessage] = useState('')
+  const [amend, setAmend] = useState(false)
+  const [committing, setCommitting] = useState(false)
+  const d = state.data
+  const busy =
+    data.state.mergeInProgress ||
+    data.state.rebaseInProgress ||
+    data.state.cherryPickInProgress ||
+    data.state.revertInProgress
+
+  const commit = async () => {
+    if (!message.trim() && !amend) return
+    setCommitting(true)
+    const ok = await actions.run(
+      'Commit',
+      'commit',
+      { message, amend },
+      { successMessage: amend ? 'Commit amended' : 'Committed' },
+    )
+    setCommitting(false)
+    if (ok) setMessage('')
+  }
+
+  const openStaged = (file: ChangedFile) =>
+    onOpenDiff({
+      file,
+      from: data.head ? 'HEAD' : 'EMPTY',
+      to: 'INDEX',
+      label: 'HEAD → Index (staged)',
+    })
+  const openUnstaged = (file: ChangedFile) =>
+    onOpenDiff({
+      file,
+      from: file.status === '?' ? 'HEAD' : 'INDEX',
+      to: 'WORKING',
+      label: file.status === '?' ? 'Untracked file' : 'Index → Working tree (unstaged)',
+    })
+
+  const stagedMenu = (file: ChangedFile | undefined, path: string, isDir: boolean): MenuEntry[] => [
+    ...(file
+      ? [
+          { label: 'Open Diff', icon: <IconFileDiff />, onClick: () => openStaged(file) },
+          'separator' as const,
+        ]
+      : []),
+    {
+      label: isDir ? 'Unstage Folder' : 'Unstage',
+      icon: <IconMinus />,
+      onClick: () =>
+        void actions.run(`Unstage ${path}`, 'unstage', { paths: [path] }, { silent: true }),
+    },
+    {
+      label: isDir ? 'Discard Folder Changes…' : 'Discard Changes…',
+      icon: <IconEraser />,
+      danger: true,
+      onClick: () => void discard(path),
+    },
+    'separator',
+    { label: 'Copy Path', icon: <IconCopy />, onClick: () => void actions.copy(path, 'Path') },
+  ]
+  const unstagedMenu = (
+    file: ChangedFile | undefined,
+    path: string,
+    isDir: boolean,
+  ): MenuEntry[] => [
+    ...(file
+      ? [
+          { label: 'Open Diff', icon: <IconFileDiff />, onClick: () => openUnstaged(file) },
+          'separator' as const,
+        ]
+      : []),
+    {
+      label: isDir ? 'Stage Folder' : 'Stage',
+      icon: <IconPlus />,
+      onClick: () =>
+        void actions.run(`Stage ${path}`, 'stage', { paths: [path] }, { silent: true }),
+    },
+    ...(file?.status === 'U'
+      ? [
+          {
+            label: 'Resolve using Ours',
+            onClick: () =>
+              void actions.run(`Resolve ${path} (ours)`, 'resolveConflict', {
+                paths: [path],
+                side: 'ours',
+              }),
+          },
+          {
+            label: 'Resolve using Theirs',
+            onClick: () =>
+              void actions.run(`Resolve ${path} (theirs)`, 'resolveConflict', {
+                paths: [path],
+                side: 'theirs',
+              }),
+          },
+        ]
+      : []),
+    {
+      label: isDir
+        ? 'Discard Folder Changes…'
+        : file?.status === '?'
+          ? 'Delete File…'
+          : 'Discard Changes…',
+      icon: <IconEraser />,
+      danger: true,
+      onClick: () => void discard(path),
+    },
+    'separator',
+    { label: 'Copy Path', icon: <IconCopy />, onClick: () => void actions.copy(path, 'Path') },
+  ]
+
+  const discard = async (path: string) => {
+    const ok = await dialog.confirm(
+      `Discard changes to "${path}"?`,
+      'The changes will be permanently lost.',
+      {
+        submitLabel: 'Discard',
+        danger: true,
+      },
+    )
+    if (ok) await actions.run(`Discard ${path}`, 'discard', { paths: [path] })
+  }
+
+  if (state.error) return <ErrorBox message={state.error} />
+  if (!d) return <Loading />
+
+  return (
+    <div className={cls.wrap}>
+      <div className={`${cls.info} flex flex-col gap-2`}>
+        <div className="font-semibold flex items-center gap-2">
+          <IconGitCommit className="w-4 h-4" /> Commit to{' '}
+          {data.currentBranch ?? <span className="text-warning">detached HEAD</span>}
+        </div>
+        {busy && (
+          <div className="text-warning text-xs">
+            An operation is in progress (merge/rebase/cherry-pick/revert). Resolve conflicts, stage
+            the files, then continue from the banner above.
+          </div>
+        )}
+        <textarea
+          rows={4}
+          placeholder={
+            amend
+              ? 'Leave empty to keep the previous message'
+              : 'Commit message (Ctrl+Enter to commit)'
+          }
+          value={message}
+          onChange={(e) => setMessage(e.target.value)}
+          onKeyDown={(e) => {
+            if ((e.ctrlKey || e.metaKey) && e.key === 'Enter') void commit()
+          }}
+        />
+        <div className="flex items-center gap-3 flex-wrap">
+          <button
+            type="button"
+            className="btn"
+            disabled={
+              committing || (!message.trim() && !amend) || (d.staged.length === 0 && !amend)
+            }
+            onClick={() => void commit()}
+          >
+            {committing ? (
+              <IconLoader className="w-3.5 h-3.5 animate-spin" />
+            ) : (
+              <IconGitCommit className="w-3.5 h-3.5" />
+            )}
+            {amend ? 'Amend' : 'Commit'}
+            {d.staged.length > 0 && <span className="opacity-80">({d.staged.length})</span>}
+          </button>
+          <label className="flex items-center gap-1 cursor-pointer">
+            <input
+              type="checkbox"
+              checked={amend}
+              onChange={(e) => setAmend(e.target.checked)}
+              disabled={!data.head}
+            />{' '}
+            Amend last commit
+          </label>
+        </div>
+        <div className="flex items-center gap-2 flex-wrap mt-1">
+          <button
+            type="button"
+            className="btn btn-secondary"
+            onClick={() => void actions.stash()}
+            disabled={d.staged.length + d.unstaged.length === 0}
+          >
+            <IconArchive className="w-3.5 h-3.5" /> Stash…
+          </button>
+          <button type="button" className="btn btn-secondary" onClick={runDiscardAll}>
+            <IconEraser className="w-3.5 h-3.5" /> Discard All…
+          </button>
+        </div>
+        {d.staged.length === 0 && d.unstaged.length > 0 && (
+          <div className="text-fg-dim text-xs">
+            Stage files (right-click → Stage, or "Stage All") before committing.
+          </div>
+        )}
+      </div>
+      <div className="flex-1 min-w-0 flex flex-col">
+        <div className={cls.header}>
+          <span>Staged changes</span>
+          <span className="badge">{d.staged.length}</span>
+          <span className="flex-1" />
+          <button
+            type="button"
+            className="icon-btn !w-5 !h-5"
+            title="Unstage all"
+            disabled={d.staged.length === 0}
+            onClick={() => void actions.run('Unstage all', 'unstageAll', {}, { silent: true })}
+          >
+            <IconMinus className="w-3.5 h-3.5" />
+          </button>
+        </div>
+        <div className="p-1">
+          <ChangedFilesTree
+            files={d.staged}
+            emptyText="No staged changes"
+            maxRows={treeRows}
+            onOpenFile={openStaged}
+            menuFor={stagedMenu}
+          />
+        </div>
+        <div className="section-header">
+          <span>Changes</span>
+          <span className="badge">{d.unstaged.length}</span>
+          <span className="flex-1" />
+          <button
+            type="button"
+            className="icon-btn !w-5 !h-5"
+            title="Stage all"
+            disabled={d.unstaged.length === 0}
+            onClick={() => void actions.run('Stage all', 'stageAll', {}, { silent: true })}
+          >
+            <IconPlus className="w-3.5 h-3.5" />
+          </button>
+        </div>
+        <div className="p-1">
+          <ChangedFilesTree
+            files={d.unstaged}
+            emptyText="No unstaged changes"
+            maxRows={treeRows}
+            onOpenFile={openUnstaged}
+            menuFor={unstagedMenu}
+          />
+        </div>
+      </div>
+    </div>
+  )
+
+  function runDiscardAll() {
+    const item = actions
+      .uncommittedMenu()
+      .find((m) => m !== 'separator' && m.label.startsWith('Discard All'))
+    if (item && item !== 'separator') item.onClick()
+  }
+}

@@ -1,0 +1,47 @@
+{
+  "name": "repotree",
+  "version": "0.1.0",
+  "private": true,
+  "description": "Local Node.js server with a React web UI for browsing and managing git repositories (inspired by Git Graph)",
+  "bin": {
+    "repotree": "./bin/repotree.js"
+  },
+  "type": "module",
+  "scripts": {
+    "dev": "concurrently -k -n server,vite -c blue,magenta \"pnpm dev:server\" \"pnpm dev:client\"",
+    "dev:server": "tsx watch server/index.ts --port 3210",
+    "dev:client": "vite",
+    "build": "vite build",
+    "start": "tsx server/index.ts",
+    "preview": "pnpm build && pnpm start",
+    "lint": "oxlint",
+    "fmt": "oxfmt",
+    "typecheck": "tsc -p tsconfig.json --noEmit && tsc -p tsconfig.server.json --noEmit"
+  },
+  "dependencies": {
+    "@hono/node-server": "^2.1.1",
+    "hono": "^4.13.8",
+    "tsx": "^4.23.13"
+  },
+  "devDependencies": {
+    "@iconify-json/lucide": "^1.2.134",
+    "@pierre/diffs": "^1.4.3",
+    "@pierre/trees": "1.0.0-beta.6",
+    "@svgr/core": "^8.1.0",
+    "@svgr/plugin-jsx": "^8.1.0",
+    "@tailwindcss/vite": "^4.3.3",
+    "@types/node": "^26.6.1",
+    "@types/react": "^19.3.0",
+    "@types/react-dom": "^19.3.0",
+    "@vitejs/plugin-react": "^6.1.1",
+    "concurrently": "^9",
+    "oxfmt": "^0.68.0",
+    "oxlint": "^1.83.0",
+    "react": "^19.3.0",
+    "react-dom": "^19.3.0",
+    "tailwindcss": "^4.3.3",
+    "typescript": "^5.9",
+    "unplugin-icons": "^24.0.0",
+    "vite": "^8.3.0"
+  }
+}
