@@ -9,7 +9,7 @@ import { decodeActionRequest } from '../shared/actions.ts'
 describe('Git action outcomes', () => {
   let repo: string
   beforeEach(async () => {
-    repo = await mkdtemp(join(tmpdir(), 'repotree-actions-'))
+    repo = await mkdtemp(join(tmpdir(), 'embegrav-actions-'))
     await git(repo, ['init', '-b', 'main'])
     await git(repo, ['config', 'user.name', 'Test'])
     await git(repo, ['config', 'user.email', 'test@example.com'])

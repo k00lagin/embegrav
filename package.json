@@ -1,10 +1,10 @@
 {
-  "name": "repotree",
+  "name": "embegrav",
   "version": "0.1.0",
   "private": true,
   "description": "Local Node.js server with a React web UI for browsing and managing git repositories (inspired by Git Graph)",
   "bin": {
-    "repotree": "./bin/repotree.js"
+    "embegrav": "./bin/embegrav.js"
   },
   "type": "module",
   "scripts": {

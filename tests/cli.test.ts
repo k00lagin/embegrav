@@ -59,11 +59,11 @@ it('releases an SSE subscription when the client disconnects during watcher init
 })
 
 it('runs the linked CLI help from an unrelated directory', async () => {
-  const cwd = await mkdtemp(join(tmpdir(), 'repotree-cli-'))
+  const cwd = await mkdtemp(join(tmpdir(), 'embegrav-cli-'))
   try {
-    const entry = fileURLToPath(new URL('../bin/repotree.js', import.meta.url))
+    const entry = fileURLToPath(new URL('../bin/embegrav.js', import.meta.url))
     const { stdout, stderr } = await run(process.execPath, [entry, '--help'], { cwd })
-    expect(stdout).toContain('Usage: repotree')
+    expect(stdout).toContain('Usage: embegrav')
     expect(stderr).toBe('')
   } finally {
     await rm(cwd, { recursive: true, force: true })

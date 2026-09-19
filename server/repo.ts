@@ -31,7 +31,7 @@ const RS = '\x1e' // record separator
 // pretty-format placeholder (https://git-scm.com/docs/pretty-formats). A format
 // string is generated from the keys a caller asks for, and the output is parsed
 // back into a keyed record, so consumers never depend on field positions.
-// Provenance: written for RepoTree; the placeholders are git's public format
+// Provenance: written for Embegrav; the placeholders are git's public format
 // interface, the record shape and the identity/timestamp helpers are our own.
 // ---------------------------------------------------------------------------
 

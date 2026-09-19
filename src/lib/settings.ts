@@ -35,7 +35,7 @@ export const DEFAULT_SETTINGS: Settings = {
   showCommitter: false,
 }
 
-const KEY = 'repotree.settings'
+const KEY = 'embegrav.settings'
 
 function load(): Settings {
   try {
@@ -102,7 +102,7 @@ export function useSettings(): [Settings, (patch: Partial<Settings>) => void] {
 /** Per-repository UI state that should survive reloads (selected branches, last repo). */
 export function loadLocal<T>(key: string, fallback: T, isValid: (value: unknown) => value is T): T {
   try {
-    const raw = localStorage.getItem(`repotree.${key}`)
+    const raw = localStorage.getItem(`embegrav.${key}`)
     const value: unknown = raw ? JSON.parse(raw) : undefined
     return isValid(value) ? value : fallback
   } catch {
@@ -112,7 +112,7 @@ export function loadLocal<T>(key: string, fallback: T, isValid: (value: unknown)
 
 export function saveLocal(key: string, value: unknown): void {
   try {
-    localStorage.setItem(`repotree.${key}`, JSON.stringify(value))
+    localStorage.setItem(`embegrav.${key}`, JSON.stringify(value))
   } catch {
     /* ignore */
   }

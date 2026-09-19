@@ -9,7 +9,7 @@ import type { GraphRequest } from '../shared/types.ts'
 let repo: string
 
 beforeEach(async () => {
-  repo = await mkdtemp(join(tmpdir(), 'repotree-status-'))
+  repo = await mkdtemp(join(tmpdir(), 'embegrav-status-'))
   await git(repo, ['init', '-b', 'main'])
   await git(repo, ['config', 'user.name', 'Test'])
   await git(repo, ['config', 'user.email', 'test@example.com'])

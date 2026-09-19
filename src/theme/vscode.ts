@@ -350,7 +350,7 @@ function stripJsonComments(text: string): string {
   return out
 }
 
-const STORAGE_KEY = 'repotree.theme'
+const STORAGE_KEY = 'embegrav.theme'
 
 export function loadStoredTheme(): VsCodeTheme | null {
   try {

@@ -72,7 +72,7 @@ const wrapper = ({ children }: { children: ReactNode }) => (
 beforeEach(() => {
   localStorage.clear()
   localStorage.setItem(
-    'repotree.settings',
+    'embegrav.settings',
     JSON.stringify({ ...DEFAULT_SETTINGS, autoRefresh: false }),
   )
   vi.spyOn(api, 'stats').mockResolvedValue({ stats: {} })

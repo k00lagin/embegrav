@@ -42,7 +42,7 @@ function parseArgs(argv: string[]): Cli {
     else if (a === '--host') cli.host = argv[++i]
     else if (a === '--open' || a === '-o') cli.open = true
     else if (a === '--help' || a === '-h') {
-      console.log(`Usage: repotree [options] [path ...]
+      console.log(`Usage: embegrav [options] [path ...]
 
 Opens a Git Graph style web UI for the given repositories (default: current directory).
 If a path is not a repository, its immediate sub-directories are scanned for repositories.
@@ -192,7 +192,7 @@ if (hasDist) {
 } else {
   app.get('/', (c) =>
     c.text(
-      'RepoTree server is running. The web client has not been built yet: run "pnpm build" (or use "pnpm dev" for the Vite dev server on http://localhost:5173).',
+      'Embegrav server is running. The web client has not been built yet: run "pnpm build" (or use "pnpm dev" for the Vite dev server on http://localhost:5173).',
     ),
   )
 }
@@ -206,7 +206,7 @@ async function main() {
   const repos = listRepos()
   serve({ fetch: app.fetch, port: cli.port, hostname: cli.host }, (info) => {
     const url = `http://${cli.host === '0.0.0.0' ? 'localhost' : cli.host}:${info.port}`
-    console.log(`RepoTree listening on ${url}`)
+    console.log(`Embegrav listening on ${url}`)
     console.log(
       `Repositories (${repos.length}): ${repos.map((r) => r.path).join(', ') || '(none)'}`,
     )

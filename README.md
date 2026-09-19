@@ -1,9 +1,12 @@
-# RepoTree
+# Embegrav
 
-A standalone Node.js server with a web UI for browsing and managing git
-repositories, inspired by the VS Code **Git Graph** extension. Open a
-repository (or a folder of repositories), look at the commit graph, and run
-every day-to-day git operation from the UI.
+**Embegrav** (Embeddable Git repo graph viewer) is a standalone Node.js server with a web UI for browsing and managing git repositories, inspired by the GitKraken, VS Code **Git Graph** extension, and Sublime Merge. Open a repository (or a folder of repositories), look at the commit graph, and run every day-to-day git operation from the UI.
+
+<picture>
+  <source media="(prefers-color-scheme: dark)" srcset="docs/screenshot-dark.png">
+  <source media="(prefers-color-scheme: light)" srcset="docs/screenshot-light.png">
+  <img alt="Embegrav — commit graph with the uncommitted changes panel" src="docs/screenshot-light.png">
+</picture>
 
 Stack: Node.js + [Hono](https://hono.dev) server, React 19, Vite 8 (Rolldown +
 Oxc), oxlint / oxfmt, Tailwind CSS 4, Lucide icons via `unplugin-icons`,
@@ -28,7 +31,7 @@ sub-directories are scanned:
 ```bash
 pnpm start -- C:\Git\my-repo D:\projects --port 4000 --open
 # or, once linked with `pnpm link --global`:
-repotree ~/projects --open
+embegrav ~/projects --open
 ```
 
 During development run the API server and the Vite dev server together:
@@ -99,13 +102,13 @@ colour theme JSON can be imported from _Settings → Theme → Import…_:
 Imported themes are persisted in `localStorage`. Programmatic use:
 
 ```ts
-import { applyTheme, parseThemeJson } from './src/theme/vscode'
-applyTheme(parseThemeJson(themeJsonText))
+import { applyTheme, parseThemeJson } from "./src/theme/vscode";
+applyTheme(parseThemeJson(themeJsonText));
 ```
 
 ## Provenance
 
-RepoTree is an independent implementation. Git Graph served as a functional
+Embegrav is an independent implementation. Git Graph served as a functional
 and visual reference only; no source code, text, icons or images were taken
 from it. Points worth knowing when auditing the code:
 
@@ -144,7 +147,7 @@ All endpoints are under `/api` and take JSON bodies:
 
 | Endpoint             | Purpose                                |
 | -------------------- | -------------------------------------- |
-| `GET  /repos`        | registered repositories                |
+| `GET /repos`         | registered repositories                |
 | `POST /repos`        | register a path (`{ path }`)           |
 | `POST /graph`        | commits, refs, stashes, status, state  |
 | `POST /commit`       | commit details + changed files         |
@@ -153,7 +156,7 @@ All endpoints are under `/api` and take JSON bodies:
 | `POST /file-diff`    | unified patch for one file             |
 | `POST /file-content` | full file contents at a revision       |
 | `POST /action`       | run a git action (`{ action, args }`)  |
-| `GET  /events`       | SSE stream of repository change events |
+| `GET /events`        | SSE stream of repository change events |
 
 Action names and payloads are defined in `shared/actions.ts` and validated before
 dispatch. Boolean options are JSON booleans. The API also retains options that
