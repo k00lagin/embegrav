@@ -7,6 +7,7 @@ interface Entry {
   watcher: FSWatcher | null
   listeners: Set<Listener>
   timer: NodeJS.Timeout | null
+  ready: Promise<void>
 }
 
 const entries = new Map<string, Entry>()
@@ -17,22 +18,17 @@ const entries = new Map<string, Entry>()
 const IGNORED =
   /(^|[\\/])(index\.lock|.*\.lock|ORIG_HEAD|FETCH_HEAD|COMMIT_EDITMSG|logs[\\/]HEAD|objects[\\/]|fsmonitor--daemon([\\/]|$)|hooks[\\/]|info[\\/]|lfs[\\/])/
 
-async function ensureWatcher(repo: string): Promise<Entry> {
-  let entry = entries.get(repo)
-  if (entry) return entry
-  entry = { watcher: null, listeners: new Set(), timer: null }
-  entries.set(repo, entry)
+async function initializeWatcher(repo: string, entry: Entry): Promise<void> {
   try {
     const gitDir = (await git(repo, ['rev-parse', '--absolute-git-dir'])).trim()
     const w = watch(gitDir, { recursive: true, persistent: false }, (_event, filename) => {
       const name = typeof filename === 'string' ? filename : ''
       if (name && IGNORED.test(name)) return
-      const e = entries.get(repo)
-      if (!e) return
-      if (e.timer) clearTimeout(e.timer)
-      e.timer = setTimeout(() => {
-        e.timer = null
-        for (const l of e.listeners) l()
+      if (entries.get(repo) !== entry) return
+      if (entry.timer) clearTimeout(entry.timer)
+      entry.timer = setTimeout(() => {
+        entry.timer = null
+        for (const l of entry.listeners) l()
       }, 400)
     })
     w.on('error', () => {
@@ -42,18 +38,27 @@ async function ensureWatcher(repo: string): Promise<Entry> {
   } catch {
     entry.watcher = null
   }
-  return entry
 }
 
 export async function subscribe(repo: string, listener: Listener): Promise<() => void> {
-  const entry = await ensureWatcher(repo)
+  let entry = entries.get(repo)
+  if (!entry) {
+    entry = { watcher: null, listeners: new Set(), timer: null, ready: Promise.resolve() }
+    entries.set(repo, entry)
+    entry.ready = initializeWatcher(repo, entry)
+  }
+  // Reserve the subscription before waiting, so cleanup cannot orphan an in-flight watcher.
   entry.listeners.add(listener)
+  await entry.ready
+  let subscribed = true
   return () => {
+    if (!subscribed) return
+    subscribed = false
     entry.listeners.delete(listener)
     if (entry.listeners.size === 0) {
       entry.watcher?.close()
       if (entry.timer) clearTimeout(entry.timer)
-      entries.delete(repo)
+      if (entries.get(repo) === entry) entries.delete(repo)
     }
   }
 }

@@ -1,4 +1,4 @@
-import { useEffect, useMemo, useState } from 'react'
+import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
 import type {
   ChangedFile,
   CommitDetails as CommitDetailsData,
@@ -59,12 +59,19 @@ export function CommitDetails(props: Props) {
         </button>
       )}
       {mode.kind === 'commit' && (
-        <CommitView key={mode.hash} {...props} layout={layout} hash={mode.hash} />
+        <CommitView
+          key={`${props.repo}:${mode.hash}`}
+          {...props}
+          layout={layout}
+          hash={mode.hash}
+        />
       )}
-      {mode.kind === 'uncommitted' && <UncommittedView {...props} layout={layout} />}
+      {mode.kind === 'uncommitted' && (
+        <UncommittedView key={props.repo} {...props} layout={layout} />
+      )}
       {mode.kind === 'compare' && (
         <CompareView
-          key={`${mode.from}..${mode.to}`}
+          key={`${props.repo}:${mode.from}..${mode.to}`}
           {...props}
           layout={layout}
           from={mode.from}
@@ -94,27 +101,28 @@ function layoutClasses(layout: DetailsLayout) {
       }
 }
 
-function useLoader<T>(
-  load: () => Promise<T>,
-  deps: unknown[],
-): { data: T | null; error: string | null; loading: boolean } {
-  const [state, setState] = useState<{ data: T | null; error: string | null; loading: boolean }>({
-    data: null,
-    error: null,
-    loading: true,
-  })
+function useLoader<T>(load: () => Promise<T>, version: number) {
+  const [state, setState] = useState<{
+    load: typeof load
+    version: number
+    data: T | null
+    error: string | null
+  } | null>(null)
   useEffect(() => {
     let cancelled = false
-    setState((s) => ({ ...s, loading: true }))
-    load()
-      .then((data) => !cancelled && setState({ data, error: null, loading: false }))
-      .catch((e: Error) => !cancelled && setState({ data: null, error: e.message, loading: false }))
+    void load()
+      .then((data) => !cancelled && setState({ load, version, data, error: null }))
+      .catch((e: Error) => !cancelled && setState({ load, version, data: null, error: e.message }))
     return () => {
       cancelled = true
     }
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, deps)
-  return state
+  }, [load, version])
+  // Keep the current view mounted during background refreshes so text entry,
+  // focus, and tree expansion survive. A new resource identity starts empty.
+  const current = state?.load === load && state.version === version
+  return state?.load === load
+    ? { data: state.data, error: current ? state.error : null, current }
+    : { data: null, error: null, current: false }
 }
 
 function Loading() {
@@ -149,7 +157,8 @@ function CommitView({
   onSelectCommit,
   layout,
 }: Props & { hash: string; layout: DetailsLayout }) {
-  const state = useLoader<CommitDetailsData>(() => api.commit(repo, hash), [repo, hash, version])
+  const load = useCallback(() => api.commit(repo, hash), [repo, hash])
+  const state = useLoader<CommitDetailsData>(load, version)
   const d = state.data
   const refsHere = useMemo(() => data.refs.filter((r) => r.hash === hash), [data.refs, hash])
   const cls = layoutClasses(layout)
@@ -273,10 +282,8 @@ function CompareView({
   onOpenDiff,
   layout,
 }: Props & { from: string; to: string; layout: DetailsLayout }) {
-  const state = useLoader<CompareDetails>(
-    () => api.compare(repo, from, to),
-    [repo, from, to, version],
-  )
+  const load = useCallback(() => api.compare(repo, from, to), [repo, from, to])
+  const state = useLoader<CompareDetails>(load, version)
   const cls = layoutClasses(layout)
   if (state.error) return <ErrorBox message={state.error} />
   if (!state.data) return <Loading />
@@ -333,13 +340,15 @@ function UncommittedView({
   onOpenDiff,
   layout,
 }: Props & { layout: DetailsLayout }) {
-  const state = useLoader<UncommittedDetails>(() => api.uncommitted(repo), [repo, version])
+  const load = useCallback(() => api.uncommitted(repo), [repo])
+  const state = useLoader<UncommittedDetails>(load, version)
   const cls = layoutClasses(layout)
   const treeRows = layout === 'column' ? 20 : 10
   const dialog = useDialog()
   const [message, setMessage] = useState('')
   const [amend, setAmend] = useState(false)
   const [committing, setCommitting] = useState(false)
+  const commitInFlight = useRef(false)
   const d = state.data
   const busy =
     data.state.mergeInProgress ||
@@ -347,17 +356,29 @@ function UncommittedView({
     data.state.cherryPickInProgress ||
     data.state.revertInProgress
 
+  const canCommit =
+    state.current &&
+    !!d &&
+    !committing &&
+    !busy &&
+    (!!message.trim() || amend) &&
+    (d.staged.length > 0 || amend)
   const commit = async () => {
-    if (!message.trim() && !amend) return
+    if (!canCommit || commitInFlight.current) return
+    commitInFlight.current = true
     setCommitting(true)
-    const ok = await actions.run(
-      'Commit',
-      'commit',
-      { message, amend },
-      { successMessage: amend ? 'Commit amended' : 'Committed' },
-    )
-    setCommitting(false)
-    if (ok) setMessage('')
+    try {
+      const ok = await actions.run(
+        'Commit',
+        'commit',
+        { message, amend },
+        { successMessage: amend ? 'Commit amended' : 'Committed' },
+      )
+      if (ok) setMessage('')
+    } finally {
+      commitInFlight.current = false
+      setCommitting(false)
+    }
   }
 
   const openStaged = (file: ChangedFile) =>
@@ -486,18 +507,14 @@ function UncommittedView({
           value={message}
           onChange={(e) => setMessage(e.target.value)}
           onKeyDown={(e) => {
-            if ((e.ctrlKey || e.metaKey) && e.key === 'Enter') void commit()
+            if ((e.ctrlKey || e.metaKey) && e.key === 'Enter') {
+              e.preventDefault()
+              void commit()
+            }
           }}
         />
         <div className="flex items-center gap-3 flex-wrap">
-          <button
-            type="button"
-            className="btn"
-            disabled={
-              committing || (!message.trim() && !amend) || (d.staged.length === 0 && !amend)
-            }
-            onClick={() => void commit()}
-          >
+          <button type="button" className="btn" disabled={!canCommit} onClick={() => void commit()}>
             {committing ? (
               <IconLoader className="w-3.5 h-3.5 animate-spin" />
             ) : (
@@ -525,7 +542,11 @@ function UncommittedView({
           >
             <IconArchive className="w-3.5 h-3.5" /> Stash…
           </button>
-          <button type="button" className="btn btn-secondary" onClick={runDiscardAll}>
+          <button
+            type="button"
+            className="btn btn-secondary"
+            onClick={() => void actions.discardAll()}
+          >
             <IconEraser className="w-3.5 h-3.5" /> Discard All…
           </button>
         </div>
@@ -585,11 +606,4 @@ function UncommittedView({
       </div>
     </div>
   )
-
-  function runDiscardAll() {
-    const item = actions
-      .uncommittedMenu()
-      .find((m) => m !== 'separator' && m.label.startsWith('Discard All'))
-    if (item && item !== 'separator') item.onClick()
-  }
 }

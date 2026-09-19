@@ -253,13 +253,16 @@ async function getUpstream(repo: string, branch: string | null): Promise<Upstrea
 // Working tree status
 // ---------------------------------------------------------------------------
 
-export async function getUncommitted(repo: string): Promise<UncommittedFile[]> {
+export async function getUncommitted(repo: string, paths?: string[]): Promise<UncommittedFile[]> {
   const out = await git(repo, [
+    '--literal-pathspecs',
     'status',
     '--porcelain=v2',
     '-z',
     '--untracked-files=all',
     '--no-renames',
+    '--',
+    ...(paths ?? []),
   ])
   const entries = out.split('\0')
   const files: UncommittedFile[] = []
@@ -271,18 +274,6 @@ export async function getUncommitted(repo: string): Promise<UncommittedFile[]> {
       const m = /^1 (\S)(\S) \S+ \S+ \S+ \S+ \S+ \S+ (.*)$/s.exec(e)
       if (m)
         files.push({ path: m[3], index: m[1], work: m[2], untracked: false, conflicted: false })
-    } else if (kind === '2') {
-      const m = /^2 (\S)(\S) \S+ \S+ \S+ \S+ \S+ \S+ \S+ (.*)$/s.exec(e)
-      const orig = entries[++i]
-      if (m)
-        files.push({
-          path: m[3],
-          oldPath: orig,
-          index: m[1],
-          work: m[2],
-          untracked: false,
-          conflicted: false,
-        })
     } else if (kind === 'u') {
       const m = /^u (\S)(\S) \S+ \S+ \S+ \S+ \S+ \S+ \S+ \S+ (.*)$/s.exec(e)
       if (m) files.push({ path: m[3], index: m[1], work: m[2], untracked: false, conflicted: true })
@@ -319,7 +310,10 @@ export async function getGraph(req: GraphRequest): Promise<GraphData> {
       : req.order === 'author-date'
         ? '--author-date-order'
         : '--date-order'
-  const args = ['log', `--max-count=${req.maxCommits + 1}`, orderFlag, commitFormat(GRAPH_FIELDS)]
+  // Each stash contributes at most two hidden commits (index and untracked files).
+  // Include room for every helper so the extra visible commit still proves there is more history.
+  const rawLimit = req.maxCommits + 1 + 2 * stashesAll.length
+  const args = ['log', `--max-count=${rawLimit}`, orderFlag, commitFormat(GRAPH_FIELDS)]
   const revs: string[] = []
   if (req.branches === null) {
     revs.push('--branches')
@@ -369,7 +363,9 @@ export async function getGraph(req: GraphRequest): Promise<GraphData> {
     commits,
     head,
     currentBranch: branch,
-    refs: req.showRemoteBranches ? refs : refs.filter((r) => r.type !== 'remote'),
+    refs: refs.filter(
+      (r) => (req.showRemoteBranches || r.type !== 'remote') && (req.showTags || r.type !== 'tag'),
+    ),
     stashes,
     uncommitted,
     moreAvailable,
@@ -393,13 +389,10 @@ async function getUserConfig(repo: string): Promise<{ name: string; email: strin
 // Changed files
 // ---------------------------------------------------------------------------
 
-function parseNumstat(
-  out: string,
-): Map<string, { additions: number | null; deletions: number | null; oldPath?: string }> {
-  const map = new Map<
-    string,
-    { additions: number | null; deletions: number | null; oldPath?: string }
-  >()
+type DiffStat = { additions: number | null; deletions: number | null }
+
+function parseNumstat(out: string): Map<string, DiffStat> {
+  const map = new Map<string, DiffStat>()
   const entries = out.split('\0')
   for (let i = 0; i < entries.length; i++) {
     const e = entries[i]
@@ -409,9 +402,8 @@ function parseNumstat(
     const additions = m[1] === '-' ? null : Number(m[1])
     const deletions = m[2] === '-' ? null : Number(m[2])
     if (m[3] === '') {
-      const oldPath = entries[++i]
-      const newPath = entries[++i]
-      map.set(newPath, { additions, deletions, oldPath })
+      i += 2 // Skip the source path and consume the destination path.
+      map.set(entries[i], { additions, deletions })
     } else {
       map.set(m[3], { additions, deletions })
     }
@@ -550,7 +542,7 @@ export async function getUncommittedDetails(repo: string): Promise<UncommittedDe
   const [stagedStats, unstagedStats] = await Promise.all([
     head
       ? git(repo, ['diff', '--numstat', '-z', '-M', '--cached', 'HEAD']).then(parseNumstat)
-      : Promise.resolve(new Map()),
+      : Promise.resolve(new Map<string, DiffStat>()),
     git(repo, ['diff', '--numstat', '-z', '-M']).then(parseNumstat),
   ])
   const staged: ChangedFile[] = []
@@ -564,7 +556,6 @@ export async function getUncommittedDetails(repo: string): Promise<UncommittedDe
       const s = stagedStats.get(f.path)
       staged.push({
         path: f.path,
-        oldPath: f.oldPath,
         status: statusFromLetter(f.index, '.', false),
         additions: s?.additions ?? null,
         deletions: s?.deletions ?? null,

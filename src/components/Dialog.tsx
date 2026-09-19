@@ -8,6 +8,7 @@ import {
   useState,
   type ReactNode,
 } from 'react'
+import type { FieldValues } from './dialogValues'
 
 export type Field =
   | {
@@ -43,7 +44,7 @@ export type Field =
     }
   | { type: 'info'; name: string; text: string }
 
-export type FieldValues = Record<string, string | boolean>
+export type { FieldValues } from './dialogValues'
 
 export interface DialogSpec {
   title: string
@@ -90,6 +91,11 @@ export function DialogProvider({ children }: { children: ReactNode }) {
   const seq = useRef(0)
 
   const open = useCallback((spec: DialogSpec) => {
+    const names = new Set<string>()
+    for (const field of spec.fields ?? []) {
+      if (names.has(field.name)) throw new Error(`Duplicate dialog field: ${field.name}`)
+      names.add(field.name)
+    }
     return new Promise<FieldValues | null>((resolve) => {
       const id = ++seq.current
       setActive((prev) => {

@@ -1,3 +1,4 @@
+import type { ActionArgs, ActionName } from '@shared/actions'
 import type {
   ActionResult,
   CommitDetails,
@@ -10,16 +11,6 @@ import type {
   RepoInfo,
   UncommittedDetails,
 } from '@shared/types'
-
-export class ApiError extends Error {
-  constructor(
-    message: string,
-    public readonly status: number,
-  ) {
-    super(message)
-    this.name = 'ApiError'
-  }
-}
 
 async function request<T>(method: string, url: string, body?: unknown): Promise<T> {
   const res = await fetch(url, {
@@ -39,7 +30,7 @@ async function request<T>(method: string, url: string, body?: unknown): Promise<
       json && typeof json === 'object' && 'error' in json
         ? String((json as { error: unknown }).error)
         : text || res.statusText
-    throw new ApiError(msg, res.status)
+    throw new Error(msg)
   }
   return json as T
 }
@@ -60,7 +51,7 @@ export const api = {
   fileDiff: (req: FileDiffRequest) => post<FileDiffResponse>('/api/file-diff', req),
   fileContent: (repo: string, rev: string, path: string) =>
     post<{ contents: string | null }>('/api/file-content', { repo, rev, path }),
-  action: (repo: string, action: string, args: Record<string, unknown> = {}) =>
+  action: <K extends ActionName>(repo: string, action: K, args: ActionArgs[K]) =>
     post<ActionResult>('/api/action', { repo, action, args }),
 }
 

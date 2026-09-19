@@ -47,20 +47,6 @@ export function shortHash(hash: string, length = 8): string {
 
 export const UNCOMMITTED = 'UNCOMMITTED'
 
-export function isUncommitted(hash: string | null | undefined): boolean {
-  return hash === UNCOMMITTED
-}
-
-export function basename(path: string): string {
-  const i = path.lastIndexOf('/')
-  return i >= 0 ? path.slice(i + 1) : path
-}
-
-export function dirname(path: string): string {
-  const i = path.lastIndexOf('/')
-  return i >= 0 ? path.slice(0, i) : ''
-}
-
 export function pluralize(n: number, singular: string, plural = `${singular}s`): string {
   return `${n} ${n === 1 ? singular : plural}`
 }

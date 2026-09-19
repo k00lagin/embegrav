@@ -49,8 +49,6 @@ export interface GraphRow {
   segments: GraphSegment[]
   /** Lanes still active below this row (used to draw pass-through lines in expanded rows) */
   active: ActiveLane[]
-  /** Number of lanes this row touches */
-  width: number
 }
 
 export interface GraphLayout {
@@ -135,7 +133,6 @@ export function layoutGraph(commits: GraphCommitInput[]): GraphLayout {
       color,
       segments,
       active: lanes.flatMap((l, i) => (l ? [{ lane: i, color: l.color }] : [])),
-      width,
     })
   }
 

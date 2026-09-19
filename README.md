@@ -37,7 +37,13 @@ During development run the API server and the Vite dev server together:
 pnpm dev              # API on :3210, UI with HMR on http://localhost:5173
 ```
 
-Other scripts: `pnpm lint` (oxlint), `pnpm fmt` (oxfmt), `pnpm typecheck`.
+Other scripts: `pnpm lint` (oxlint), `pnpm fmt` (oxfmt), `pnpm typecheck`,
+and `pnpm test` (behavioral regressions with Vitest).
+
+Git mutation tests create disposable repositories under the operating system's
+temporary directory. They do not modify the repository running the tests or
+contact real remotes. UI tests exercise dialogs and asynchronous state through
+jsdom; typechecking includes the test files.
 
 ## Features
 
@@ -112,9 +118,6 @@ from it. Points worth knowing when auditing the code:
   theme; the default Dark Modern / Light Modern values are Microsoft's (MIT).
 - Diff rendering and the file tree are the `@pierre/diffs` and `@pierre/trees`
   packages (Apache-2.0).
-- The `research/` folder holds comparison material, including a copy of the
-  upstream Git Graph repository under its own licence. It is not part of the
-  application and must not be shipped with it.
 
 ## Layout
 
@@ -151,3 +154,14 @@ All endpoints are under `/api` and take JSON bodies:
 | `POST /file-content` | full file contents at a revision       |
 | `POST /action`       | run a git action (`{ action, args }`)  |
 | `GET  /events`       | SSE stream of repository change events |
+
+Action names and payloads are defined in `shared/actions.ts` and validated before
+dispatch. Boolean options are JSON booleans. The API also retains options that
+are not exposed by the UI: `fetch.pruneTags`, `push.forceUnsafe`, `pruneRemote`,
+`rebase.ignoreDate`, and `commit.signoff`. `push.forceUnsafe` requests Git's
+unconditional force push; the UI uses `force` (`--force-with-lease`).
+
+Completing a merge with Git's prepared message uses
+`{ "action": "commit", "args": { "messageMode": "prepared" } }` plus the usual
+`repo` field. Ordinary commits provide `message`; `allowEmpty` controls empty
+changesets, not message selection.

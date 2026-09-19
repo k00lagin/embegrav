@@ -41,10 +41,46 @@ function load(): Settings {
   try {
     const raw = localStorage.getItem(KEY)
     if (!raw) return DEFAULT_SETTINGS
-    return { ...DEFAULT_SETTINGS, ...(JSON.parse(raw) as Partial<Settings>) }
+    const value: unknown = JSON.parse(raw)
+    if (!value || typeof value !== 'object' || Array.isArray(value)) return DEFAULT_SETTINGS
+    const stored = value as Record<string, unknown>
+    const settings = { ...DEFAULT_SETTINGS }
+    for (const key of [
+      'showRemoteBranches',
+      'showStashes',
+      'showTags',
+      'showUncommitted',
+      'fetchAndPrune',
+      'autoRefresh',
+      'showCommitter',
+    ] as const) {
+      if (typeof stored[key] === 'boolean') settings[key] = stored[key]
+    }
+    if (
+      typeof stored.maxCommits === 'number' &&
+      Number.isInteger(stored.maxCommits) &&
+      stored.maxCommits >= 1 &&
+      stored.maxCommits <= 50_000
+    ) {
+      settings.maxCommits = stored.maxCommits
+    }
+    settings.order = choice(stored.order, ['date', 'author-date', 'topo'], settings.order)
+    settings.dateFormat = choice(
+      stored.dateFormat,
+      ['relative', 'datetime', 'date'],
+      settings.dateFormat,
+    )
+    settings.dateType = choice(stored.dateType, ['author', 'commit'], settings.dateType)
+    settings.diffStyle = choice(stored.diffStyle, ['unified', 'split'], settings.diffStyle)
+    settings.commitView = choice(stored.commitView, ['unified', 'split'], settings.commitView)
+    return settings
   } catch {
     return DEFAULT_SETTINGS
   }
+}
+
+function choice<T>(value: unknown, allowed: readonly T[], fallback: T): T {
+  return allowed.find((option) => option === value) ?? fallback
 }
 
 export function useSettings(): [Settings, (patch: Partial<Settings>) => void] {
@@ -64,10 +100,11 @@ export function useSettings(): [Settings, (patch: Partial<Settings>) => void] {
 }
 
 /** Per-repository UI state that should survive reloads (selected branches, last repo). */
-export function loadLocal<T>(key: string, fallback: T): T {
+export function loadLocal<T>(key: string, fallback: T, isValid: (value: unknown) => value is T): T {
   try {
     const raw = localStorage.getItem(`repotree.${key}`)
-    return raw ? (JSON.parse(raw) as T) : fallback
+    const value: unknown = raw ? JSON.parse(raw) : undefined
+    return isValid(value) ? value : fallback
   } catch {
     return fallback
   }

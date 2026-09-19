@@ -4,7 +4,7 @@
   "categories": { "correctness": "error", "suspicious": "warn" },
   "rules": {
     "no-unused-vars": "warn",
-    "react/exhaustive-deps": "off",
+    "react/exhaustive-deps": "error",
     "react/react-in-jsx-scope": "off",
     "unicorn/no-array-sort": "off",
     "unicorn/consistent-function-scoping": "off",

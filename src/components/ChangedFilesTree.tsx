@@ -55,12 +55,17 @@ export function ChangedFilesTree({
       return {}
     }
   }, [resolved])
+  // Pierre retains its initial callbacks for the model's entire lifetime.
+  const filesRef = useRef(byPath)
+  const colorsRef = useRef(resolved.colors)
   const menuRef = useRef(menuFor)
   const openRef = useRef(onOpenFile)
   useEffect(() => {
+    filesRef.current = byPath
+    colorsRef.current = resolved.colors
     menuRef.current = menuFor
     openRef.current = onOpenFile
-  })
+  }, [byPath, resolved.colors, menuFor, onOpenFile])
 
   const { model } = useFileTree({
     paths,
@@ -73,22 +78,28 @@ export function ChangedFilesTree({
       ? { contextMenu: { enabled: true, triggerMode: 'right-click' } }
       : undefined,
     renderRowDecoration: ({ item }) => {
-      const f = byPath.get(item.path)
+      const f = filesRef.current.get(item.path)
       if (!f || item.kind !== 'file') return null
       if (f.additions === null && f.deletions === null) return null
       return {
         text: `+${f.additions ?? 0} −${f.deletions ?? 0}`,
         parts: [
-          { text: `+${f.additions ?? 0}`, color: '#89d185' },
+          {
+            text: `+${f.additions ?? 0}`,
+            color: colorsRef.current?.['gitDecoration.addedResourceForeground'],
+          },
           { text: ' ' },
-          { text: `−${f.deletions ?? 0}`, color: '#f14c4c' },
+          {
+            text: `−${f.deletions ?? 0}`,
+            color: colorsRef.current?.['gitDecoration.deletedResourceForeground'],
+          },
         ],
       }
     },
     onSelectionChange: (selected) => {
       const path = selected[0]
       if (!path) return
-      const f = byPath.get(path)
+      const f = filesRef.current.get(path)
       if (f) openRef.current(f)
     },
   })
@@ -97,6 +108,15 @@ export function ChangedFilesTree({
     model.resetPaths(paths)
     model.setGitStatus(gitStatus)
   }, [model, paths, gitStatus])
+
+  useEffect(() => {
+    // Status can be unchanged when counts or theme colors change. Force the
+    // mounted view to read the current decoration metadata in that case too.
+    filesRef.current = byPath
+    colorsRef.current = resolved.colors
+    const container = model.getFileTreeContainer()
+    if (container) model.render({ fileTreeContainer: container })
+  }, [model, byPath, resolved.colors])
 
   // Visible rows: directories + files (approximation for the initial height)
   const dirCount = useMemo(() => {
@@ -123,8 +143,11 @@ export function ChangedFilesTree({
           ? (item: ContextMenuItem, ctx: ContextMenuOpenContext) => (
               <TreeMenu
                 entries={
-                  menuRef.current?.(byPath.get(item.path), item.path, item.kind === 'directory') ??
-                  []
+                  menuRef.current?.(
+                    filesRef.current.get(item.path),
+                    item.path,
+                    item.kind === 'directory',
+                  ) ?? []
                 }
                 close={ctx.close}
               />

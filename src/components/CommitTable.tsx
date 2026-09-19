@@ -1,4 +1,4 @@
-import { memo, type MouseEvent, type ReactNode } from 'react'
+import type { MouseEvent, ReactNode } from 'react'
 import type { CommitStats, GitCommit, GitRef, GraphData } from '@shared/types'
 import { graphWidth, type GraphRow } from '@/graph/layout'
 import { formatDate, shortHash, UNCOMMITTED } from '@/lib/format'
@@ -142,7 +142,7 @@ interface RowProps {
   details: ReactNode
 }
 
-const RowGroup = memo(function RowGroup(p: RowProps) {
+function RowGroup(p: RowProps) {
   const { row, data, settings } = p
   const c = row.commit
   const { graphColors } = useTheme()
@@ -244,4 +244,4 @@ const RowGroup = memo(function RowGroup(p: RowProps) {
       )}
     </>
   )
-})
+}

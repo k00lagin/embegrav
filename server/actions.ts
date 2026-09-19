@@ -1,27 +1,28 @@
 import { rm } from 'node:fs/promises'
 import { join } from 'node:path'
-import { assertSafeArg, bool, gitOutput, optionalString, stringArray } from './git.ts'
+import { assertSafeArg, git, gitOutput, optionalString } from './git.ts'
+import { getUncommitted } from './repo.ts'
+import type { ActionArgs, ActionName } from '../shared/actions.ts'
 
-type Args = Record<string, unknown>
-type Handler = (repo: string, args: Args) => Promise<string>
+type Handlers = { [K in ActionName]: (repo: string, args: ActionArgs[K]) => Promise<string> }
 
 const ref = (v: unknown, label = 'ref') => assertSafeArg(v, label)
 
-export const actions: Record<string, Handler> = {
+const actions: Handlers = {
   // --- remote -------------------------------------------------------------
   async fetch(repo, a) {
     const args = ['fetch']
-    if (bool(a.prune)) args.push('--prune')
-    if (bool(a.pruneTags)) args.push('--prune-tags')
+    if (a.prune) args.push('--prune')
+    if (a.pruneTags) args.push('--prune-tags')
     const remote = optionalString(a.remote)
     args.push(remote ? ref(remote, 'remote') : '--all')
     return gitOutput(repo, args)
   },
   async pull(repo, a) {
     const args = ['pull']
-    if (bool(a.rebase)) args.push('--rebase')
-    if (bool(a.noFF)) args.push('--no-ff')
-    if (bool(a.squash)) args.push('--squash')
+    if (a.rebase) args.push('--rebase')
+    if (a.noFF) args.push('--no-ff')
+    if (a.squash) args.push('--squash')
     const remote = optionalString(a.remote)
     const branch = optionalString(a.branch)
     if (remote) args.push(ref(remote, 'remote'))
@@ -30,9 +31,9 @@ export const actions: Record<string, Handler> = {
   },
   async push(repo, a) {
     const args = ['push']
-    if (bool(a.setUpstream)) args.push('-u')
-    if (bool(a.force)) args.push('--force-with-lease')
-    if (bool(a.forceUnsafe)) args.push('--force')
+    if (a.setUpstream) args.push('-u')
+    if (a.force) args.push('--force-with-lease')
+    if (a.forceUnsafe) args.push('--force')
     args.push(ref(a.remote, 'remote'), ref(a.branch, 'branch'))
     return gitOutput(repo, args)
   },
@@ -92,12 +93,12 @@ export const actions: Record<string, Handler> = {
   async createBranch(repo, a) {
     const name = ref(a.name, 'branch')
     const hash = ref(a.hash, 'commit')
-    if (bool(a.checkout)) return gitOutput(repo, ['checkout', '-b', name, hash])
-    if (bool(a.force)) return gitOutput(repo, ['branch', '-f', name, hash])
+    if (a.checkout) return gitOutput(repo, ['checkout', '-b', name, hash])
+    if (a.force) return gitOutput(repo, ['branch', '-f', name, hash])
     return gitOutput(repo, ['branch', name, hash])
   },
   async deleteBranch(repo, a) {
-    return gitOutput(repo, ['branch', bool(a.force) ? '-D' : '-d', ref(a.name, 'branch')])
+    return gitOutput(repo, ['branch', a.force ? '-D' : '-d', ref(a.name, 'branch')])
   },
   async renameBranch(repo, a) {
     return gitOutput(repo, ['branch', '-m', ref(a.name, 'branch'), ref(a.newName, 'new name')])
@@ -106,23 +107,23 @@ export const actions: Record<string, Handler> = {
   // --- history ------------------------------------------------------------
   async merge(repo, a) {
     const args = ['merge']
-    if (bool(a.noFF)) args.push('--no-ff')
-    if (bool(a.squash)) args.push('--squash')
-    if (bool(a.noCommit)) args.push('--no-commit')
+    if (a.noFF) args.push('--no-ff')
+    if (a.squash) args.push('--squash')
+    if (a.noCommit) args.push('--no-commit')
     args.push(ref(a.ref))
     return gitOutput(repo, args)
   },
   async rebase(repo, a) {
     const args = ['rebase']
-    if (bool(a.preserveMerges)) args.push('--rebase-merges')
-    if (bool(a.ignoreDate)) args.push('--ignore-date')
+    if (a.preserveMerges) args.push('--rebase-merges')
+    if (a.ignoreDate) args.push('--ignore-date')
     args.push(ref(a.ref))
     return gitOutput(repo, args)
   },
   async cherryPick(repo, a) {
     const args = ['cherry-pick']
-    if (bool(a.recordOrigin)) args.push('-x')
-    if (bool(a.noCommit)) args.push('--no-commit')
+    if (a.recordOrigin) args.push('-x')
+    if (a.noCommit) args.push('--no-commit')
     const mainline = optionalString(a.mainline)
     if (mainline) args.push('-m', String(Number(mainline)))
     args.push(ref(a.hash, 'commit'))
@@ -136,8 +137,7 @@ export const actions: Record<string, Handler> = {
     return gitOutput(repo, args)
   },
   async reset(repo, a) {
-    const mode = String(a.mode)
-    if (!['soft', 'mixed', 'hard'].includes(mode)) throw new Error('invalid reset mode')
+    const mode = a.mode
     return gitOutput(repo, ['reset', `--${mode}`, ref(a.hash, 'commit')])
   },
   async dropCommit(repo, a) {
@@ -145,18 +145,15 @@ export const actions: Record<string, Handler> = {
     return gitOutput(repo, ['rebase', '--onto', `${hash}^`, hash])
   },
   async abort(repo, a) {
-    const op = String(a.op)
-    if (!['merge', 'rebase', 'cherry-pick', 'revert'].includes(op)) throw new Error('invalid op')
+    const op = a.op
     return gitOutput(repo, [op, '--abort'])
   },
   async continue(repo, a) {
-    const op = String(a.op)
-    if (!['rebase', 'cherry-pick', 'revert'].includes(op)) throw new Error('invalid op')
+    const op = a.op
     return gitOutput(repo, [op, '--continue'])
   },
   async skip(repo, a) {
-    const op = String(a.op)
-    if (!['rebase', 'cherry-pick', 'revert'].includes(op)) throw new Error('invalid op')
+    const op = a.op
     return gitOutput(repo, [op, '--skip'])
   },
 
@@ -166,8 +163,8 @@ export const actions: Record<string, Handler> = {
     const hash = ref(a.hash, 'commit')
     const message = optionalString(a.message)
     const args = ['tag']
-    if (bool(a.force)) args.push('-f')
-    if (bool(a.annotated) || message) args.push('-a', '-m', message ?? name)
+    if (a.force) args.push('-f')
+    if (a.annotated || message) args.push('-a', '-m', message ?? name)
     args.push(name, hash)
     return gitOutput(repo, args)
   },
@@ -178,21 +175,21 @@ export const actions: Record<string, Handler> = {
   // --- stashes ------------------------------------------------------------
   async stashPush(repo, a) {
     const args = ['stash', 'push']
-    if (bool(a.includeUntracked)) args.push('--include-untracked')
-    if (bool(a.keepIndex)) args.push('--keep-index')
+    if (a.includeUntracked) args.push('--include-untracked')
+    if (a.keepIndex) args.push('--keep-index')
     const message = optionalString(a.message)
     if (message) args.push('-m', message)
     return gitOutput(repo, args)
   },
   async stashApply(repo, a) {
     const args = ['stash', 'apply']
-    if (bool(a.reinstateIndex)) args.push('--index')
+    if (a.reinstateIndex) args.push('--index')
     args.push(ref(a.selector, 'stash'))
     return gitOutput(repo, args)
   },
   async stashPop(repo, a) {
     const args = ['stash', 'pop']
-    if (bool(a.reinstateIndex)) args.push('--index')
+    if (a.reinstateIndex) args.push('--index')
     args.push(ref(a.selector, 'stash'))
     return gitOutput(repo, args)
   },
@@ -205,63 +202,74 @@ export const actions: Record<string, Handler> = {
 
   // --- working tree -------------------------------------------------------
   async stage(repo, a) {
-    return gitOutput(repo, ['add', '-A', '--', ...stringArray(a.paths, 'paths')])
+    return gitOutput(repo, ['--literal-pathspecs', 'add', '-A', '--', ...a.paths])
   },
   async stageAll(repo) {
     return gitOutput(repo, ['add', '-A'])
   },
   async unstage(repo, a) {
-    return gitOutput(repo, ['reset', '-q', '--', ...stringArray(a.paths, 'paths')])
+    return gitOutput(repo, ['--literal-pathspecs', 'reset', '-q', '--', ...a.paths])
   },
   async unstageAll(repo) {
     return gitOutput(repo, ['reset', '-q'])
   },
   async discard(repo, a) {
-    const paths = stringArray(a.paths, 'paths')
+    const paths = a.paths
     const out: string[] = []
     // Untracked files: remove from disk. Tracked: restore from HEAD (or drop from index if new).
-    const status = await gitOutput(repo, [
-      'status',
-      '--porcelain=v1',
-      '-z',
-      '--untracked-files=all',
-      '--',
-      ...paths,
-    ])
-    const entries = status.split('\0').filter(Boolean)
+    const entries = await getUncommitted(repo, paths)
     const untracked: string[] = []
     const added: string[] = []
     const tracked: string[] = []
-    for (const e of entries) {
-      const code = e.slice(0, 2)
-      const p = e.slice(3)
-      if (code === '??') untracked.push(p)
-      else if (code[0] === 'A') added.push(p)
-      else tracked.push(p)
+    for (const entry of entries) {
+      if (entry.untracked) untracked.push(entry.path)
+      else if (entry.index === 'A') added.push(entry.path)
+      else tracked.push(entry.path)
     }
-    if (untracked.length) out.push(await gitOutput(repo, ['clean', '-f', '--', ...untracked]))
+    if (untracked.length)
+      out.push(await gitOutput(repo, ['--literal-pathspecs', 'clean', '-f', '--', ...untracked]))
     if (added.length) {
-      out.push(await gitOutput(repo, ['rm', '-q', '--cached', '-f', '--', ...added]))
+      out.push(
+        await gitOutput(repo, [
+          '--literal-pathspecs',
+          'rm',
+          '-q',
+          '--cached',
+          '-f',
+          '--',
+          ...added,
+        ]),
+      )
       for (const p of added) await rm(join(repo, p), { force: true })
     }
     if (tracked.length) {
-      out.push(await gitOutput(repo, ['checkout', 'HEAD', '--', ...tracked]))
+      out.push(await gitOutput(repo, ['--literal-pathspecs', 'checkout', 'HEAD', '--', ...tracked]))
     }
     return out.filter(Boolean).join('\n')
   },
   async discardAll(repo, a) {
     const out = [await gitOutput(repo, ['reset', '--hard'])]
-    if (bool(a.includeUntracked)) out.push(await gitOutput(repo, ['clean', '-fd']))
+    if (a.includeUntracked) out.push(await gitOutput(repo, ['clean', '-fd']))
     return out.join('\n')
   },
   async commit(repo, a) {
-    const message = typeof a.message === 'string' ? a.message.trim() : ''
-    const amend = bool(a.amend)
+    if (a.messageMode === 'prepared') {
+      const merge = await git(repo, ['rev-parse', '-q', '--verify', 'MERGE_HEAD'], {
+        allowCodes: [1],
+      })
+      if (!merge.trim()) throw new Error('No merge is in progress')
+      const args = ['commit', '--no-edit']
+      if (a.signoff) args.push('--signoff')
+      if (a.allowEmpty) args.push('--allow-empty')
+      return gitOutput(repo, args)
+    }
+    const message = a.message?.trim() ?? ''
+    const amend = a.amend
     if (!message && !amend) throw new Error('Commit message is required')
     const args = ['commit', '--file=-']
     if (amend) args.push('--amend')
-    if (bool(a.signoff)) args.push('--signoff')
-    if (bool(a.allowEmpty)) args.push('--allow-empty')
+    if (a.signoff) args.push('--signoff')
+    if (a.allowEmpty) args.push('--allow-empty')
     if (amend && !message) {
       args.splice(1, 1, '--no-edit')
       return gitOutput(repo, args)
@@ -269,11 +277,10 @@ export const actions: Record<string, Handler> = {
     return gitOutput(repo, args, { input: message + '\n' })
   },
   async resolveConflict(repo, a) {
-    const paths = stringArray(a.paths, 'paths')
-    const side = String(a.side)
-    if (!['ours', 'theirs'].includes(side)) throw new Error('invalid side')
-    await gitOutput(repo, ['checkout', `--${side}`, '--', ...paths])
-    return gitOutput(repo, ['add', '--', ...paths])
+    const paths = a.paths
+    const side = a.side
+    await gitOutput(repo, ['--literal-pathspecs', 'checkout', `--${side}`, '--', ...paths])
+    return gitOutput(repo, ['--literal-pathspecs', 'add', '--', ...paths])
   },
   async setUser(repo, a) {
     const out: string[] = []
@@ -285,10 +292,10 @@ export const actions: Record<string, Handler> = {
   },
 }
 
-export async function runAction(repo: string, action: string, args: Args): Promise<string> {
-  const handler = Object.prototype.hasOwnProperty.call(actions, action)
-    ? actions[action]
-    : undefined
-  if (!handler) throw new Error(`Unknown action: ${action}`)
-  return handler(repo, args ?? {})
+export async function runAction<K extends ActionName>(
+  repo: string,
+  action: K,
+  args: ActionArgs[K],
+): Promise<string> {
+  return actions[action](repo, args)
 }

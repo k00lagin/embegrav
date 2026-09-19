@@ -2,7 +2,6 @@ import { useEffect, useMemo, useState } from 'react'
 import { PatchDiff, type FileDiffOptions } from '@pierre/diffs/react'
 import type { ChangedFile } from '@shared/types'
 import { api } from '@/api'
-import { shortHash } from '@/lib/format'
 import { useTheme } from '@/theme/ThemeProvider'
 import { shikiThemeFor } from '@/theme/vscode'
 import IconX from '~icons/lucide/x'
@@ -196,12 +195,4 @@ export function statusClass(status: string): string {
     default:
       return 'bg-warning/15 text-warning'
   }
-}
-
-export function describeRev(rev: string): string {
-  if (rev === 'WORKING') return 'Working tree'
-  if (rev === 'INDEX') return 'Index'
-  if (rev === 'HEAD') return 'HEAD'
-  if (rev === 'EMPTY') return '(empty)'
-  return shortHash(rev)
 }

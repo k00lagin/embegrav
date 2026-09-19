@@ -1,4 +1,6 @@
 import { useMemo } from 'react'
+import type { ActionArgs, ActionName } from '@shared/actions'
+import { checkedValue, choiceValue, optionalTextValue, textValue } from '@/components/dialogValues'
 import type { GitCommit, GitRef, GraphData, StashInfo } from '@shared/types'
 import { api } from '@/api'
 import { useDialog } from '@/components/Dialog'
@@ -26,7 +28,6 @@ import IconEraser from '~icons/lucide/eraser'
 import IconPlus from '~icons/lucide/plus'
 import IconMinus from '~icons/lucide/minus'
 import IconLink from '~icons/lucide/link'
-import IconGitCompare from '~icons/lucide/git-compare'
 import IconCloudDownload from '~icons/lucide/cloud-download'
 
 export interface RunOptions {
@@ -37,10 +38,10 @@ export interface RunOptions {
 }
 
 export interface RepoActions {
-  run: (
+  run: <K extends ActionName>(
     title: string,
-    action: string,
-    args?: Record<string, unknown>,
+    action: K,
+    args: ActionArgs[K],
     opts?: RunOptions,
   ) => Promise<boolean>
   commitMenu: (commit: GitCommit, extra?: MenuEntry[]) => MenuEntry[]
@@ -51,6 +52,7 @@ export interface RepoActions {
   pull: () => Promise<boolean>
   push: () => Promise<boolean>
   stash: () => Promise<boolean>
+  discardAll: () => Promise<boolean>
   createBranchAt: (hash: string) => Promise<boolean>
   editUser: () => Promise<void>
   copy: (text: string, what: string) => Promise<void>
@@ -75,7 +77,7 @@ export function useRepoActions(
   const toast = useToast()
 
   return useMemo<RepoActions>(() => {
-    const run: RepoActions['run'] = async (title, action, args = {}, opts = {}) => {
+    const run: RepoActions['run'] = async (title, action, args, opts = {}) => {
       if (!repo) return false
       const id = toast.show('progress', `${title}…`)
       try {
@@ -124,6 +126,20 @@ export function useRepoActions(
         default: remotes.find((r) => r.name === 'origin')?.name ?? remotes[0]?.name,
       }) as const
 
+    const trackingDefaults = (branch: string | null) => {
+      const configured = data?.refs.find((r) => r.type === 'head' && r.name === branch)?.remote
+      const remote = configured ?? remoteField().default
+      const upstream = branch === current ? data?.upstream?.name : undefined
+      return {
+        remote,
+        branch:
+          remote && upstream?.startsWith(`${remote}/`)
+            ? upstream.slice(remote.length + 1)
+            : (branch ?? ''),
+        hasUpstream: !!configured,
+      }
+    }
+
     // ----- shared flows ----------------------------------------------------
 
     const createBranchAt = async (hash: string) => {
@@ -138,10 +154,10 @@ export function useRepoActions(
         validate: (val) => validateRefName(String(val.name)),
       })
       if (!v) return false
-      return run(`Create branch ${v.name}`, 'createBranch', {
-        name: v.name,
+      return run(`Create branch ${textValue(v, 'name')}`, 'createBranch', {
+        name: textValue(v, 'name'),
         hash,
-        checkout: v.checkout,
+        checkout: checkedValue(v, 'checkout'),
       })
     }
 
@@ -177,16 +193,22 @@ export function useRepoActions(
         validate: (val) => validateRefName(String(val.name), 'Tag name'),
       })
       if (!v) return false
-      const ok = await run(`Create tag ${v.name}`, 'createTag', {
-        name: v.name,
+      const ok = await run(`Create tag ${textValue(v, 'name')}`, 'createTag', {
+        name: textValue(v, 'name'),
         hash,
-        annotated: v.kind === 'annotated',
-        message: v.kind === 'annotated' ? String(v.message || v.name) : undefined,
+        annotated: textValue(v, 'kind') === 'annotated',
+        message:
+          textValue(v, 'kind') === 'annotated'
+            ? String(textValue(v, 'message') || textValue(v, 'name'))
+            : undefined,
       })
-      if (ok && v.push) {
+      if (ok && checkedValue(v, 'push')) {
         const remote = remotes.find((r) => r.name === 'origin')?.name ?? remotes[0]?.name
         if (remote)
-          await run(`Push tag ${v.name} to ${remote}`, 'pushTag', { remote, name: v.name })
+          await run(`Push tag ${textValue(v, 'name')} to ${remote}`, 'pushTag', {
+            remote,
+            name: textValue(v, 'name'),
+          })
       }
       return ok
     }
@@ -215,9 +237,9 @@ export function useRepoActions(
       if (!v) return false
       return run(`Merge ${ref}`, 'merge', {
         ref,
-        noFF: v.noFF,
-        squash: v.squash,
-        noCommit: v.noCommit,
+        noFF: checkedValue(v, 'noFF'),
+        squash: checkedValue(v, 'squash'),
+        noCommit: checkedValue(v, 'noCommit'),
       })
     }
 
@@ -236,7 +258,10 @@ export function useRepoActions(
         submitLabel: 'Rebase',
       })
       if (!v) return false
-      return run(`Rebase on ${ref}`, 'rebase', { ref, preserveMerges: v.preserveMerges })
+      return run(`Rebase on ${ref}`, 'rebase', {
+        ref,
+        preserveMerges: checkedValue(v, 'preserveMerges'),
+      })
     }
 
     const resetTo = async (hash: string) => {
@@ -263,24 +288,28 @@ export function useRepoActions(
         danger: true,
       })
       if (!v) return false
-      return run(`Reset (${v.mode}) to ${shortHash(hash)}`, 'reset', { hash, mode: v.mode })
+      return run(
+        `Reset (${choiceValue(v, 'mode', ['soft', 'mixed', 'hard'])}) to ${shortHash(hash)}`,
+        'reset',
+        { hash, mode: choiceValue(v, 'mode', ['soft', 'mixed', 'hard']) },
+      )
     }
 
-    const pushBranch = async (branch: string, isCurrent: boolean) => {
+    const pushBranch = async (branch: string) => {
       if (remotes.length === 0) {
         toast.show('error', 'No remotes configured', 'Add a remote first (Toolbar → Remotes).')
         return false
       }
-      const upstreamRemote = data?.refs.find((r) => r.type === 'head' && r.name === branch)?.remote
+      const defaults = trackingDefaults(branch)
       const v = await dialog.open({
         title: `Push ${branch}`,
         fields: [
-          { ...remoteField(), default: upstreamRemote ?? remoteField().default },
+          { ...remoteField(), default: defaults.remote },
           {
             type: 'checkbox',
             name: 'setUpstream',
             label: 'Set upstream (-u)',
-            default: !upstreamRemote,
+            default: !defaults.hasUpstream,
           },
           {
             type: 'checkbox',
@@ -292,11 +321,11 @@ export function useRepoActions(
         submitLabel: 'Push',
       })
       if (!v) return false
-      return run(`Push ${branch} to ${v.remote}${isCurrent ? '' : ''}`, 'push', {
-        remote: v.remote,
+      return run(`Push ${branch} to ${textValue(v, 'remote')}`, 'push', {
+        remote: textValue(v, 'remote'),
         branch,
-        setUpstream: v.setUpstream,
-        force: v.force,
+        setUpstream: checkedValue(v, 'setUpstream'),
+        force: checkedValue(v, 'force'),
       })
     }
 
@@ -306,16 +335,17 @@ export function useRepoActions(
         return false
       }
       const up = data?.upstream?.name
+      const defaults = trackingDefaults(current)
       const v = await dialog.open({
         title: `Pull into ${current ?? 'current branch'}`,
         description: up ? `Upstream: ${up}` : 'No upstream is configured for the current branch.',
         fields: [
-          remoteField(),
+          { ...remoteField(), default: defaults.remote },
           {
             type: 'text',
             name: 'branch',
             label: 'Remote branch',
-            default: up ? up.split('/').slice(1).join('/') : (current ?? ''),
+            default: defaults.branch,
           },
           {
             type: 'checkbox',
@@ -327,10 +357,10 @@ export function useRepoActions(
         submitLabel: 'Pull',
       })
       if (!v) return false
-      return run(`Pull ${v.remote}/${v.branch}`, 'pull', {
-        remote: v.remote,
-        branch: v.branch,
-        rebase: v.rebase,
+      return run(`Pull ${textValue(v, 'remote')}/${textValue(v, 'branch')}`, 'pull', {
+        remote: textValue(v, 'remote'),
+        branch: textValue(v, 'branch'),
+        rebase: checkedValue(v, 'rebase'),
       })
     }
 
@@ -364,9 +394,9 @@ export function useRepoActions(
       })
       if (!v) return false
       return run('Stash changes', 'stashPush', {
-        message: v.message,
-        includeUntracked: v.includeUntracked,
-        keepIndex: v.keepIndex,
+        message: textValue(v, 'message'),
+        includeUntracked: checkedValue(v, 'includeUntracked'),
+        keepIndex: checkedValue(v, 'keepIndex'),
       })
     }
 
@@ -380,7 +410,10 @@ export function useRepoActions(
         submitLabel: 'Save',
       })
       if (!v) return
-      await run('Update user', 'setUser', { name: v.name, email: v.email })
+      await run('Update user', 'setUser', {
+        name: textValue(v, 'name'),
+        email: textValue(v, 'email'),
+      })
     }
 
     // ----- menus -----------------------------------------------------------
@@ -444,9 +477,9 @@ export function useRepoActions(
             if (v)
               await run(`Cherry pick ${shortHash(h)}`, 'cherryPick', {
                 hash: h,
-                mainline: v.mainline,
-                recordOrigin: v.recordOrigin,
-                noCommit: v.noCommit,
+                mainline: optionalTextValue(v, 'mainline'),
+                recordOrigin: checkedValue(v, 'recordOrigin'),
+                noCommit: checkedValue(v, 'noCommit'),
               })
           },
         },
@@ -461,7 +494,11 @@ export function useRepoActions(
               fields: mainlineField,
               submitLabel: 'Revert',
             })
-            if (v) await run(`Revert ${shortHash(h)}`, 'revert', { hash: h, mainline: v.mainline })
+            if (v)
+              await run(`Revert ${shortHash(h)}`, 'revert', {
+                hash: h,
+                mainline: optionalTextValue(v, 'mainline'),
+              })
           },
         },
         {
@@ -539,10 +576,10 @@ export function useRepoActions(
               submitLabel: 'Rename',
               validate: (val) => validateRefName(String(val.newName)),
             })
-            if (v && v.newName !== name)
-              await run(`Rename ${name} → ${v.newName}`, 'renameBranch', {
+            if (v && textValue(v, 'newName') !== name)
+              await run(`Rename ${name} → ${textValue(v, 'newName')}`, 'renameBranch', {
                 name,
-                newName: v.newName,
+                newName: textValue(v, 'newName'),
               })
           },
         },
@@ -568,7 +605,7 @@ export function useRepoActions(
                   ? [
                       {
                         type: 'checkbox',
-                        name: 'remote',
+                        name: 'deleteRemote',
                         label: `Also delete ${remoteCounterpart.name} on the remote`,
                         default: false,
                       } as const,
@@ -579,8 +616,11 @@ export function useRepoActions(
               danger: true,
             })
             if (!v) return
-            const ok = await run(`Delete ${name}`, 'deleteBranch', { name, force: v.force })
-            if (ok && v.remote && remoteCounterpart) {
+            const ok = await run(`Delete ${name}`, 'deleteBranch', {
+              name,
+              force: checkedValue(v, 'force'),
+            })
+            if (ok && checkedValue(v, 'deleteRemote') && remoteCounterpart?.remote) {
               await run(`Delete ${remoteCounterpart.name}`, 'deleteRemoteBranch', {
                 remote: remoteCounterpart.remote,
                 name,
@@ -612,7 +652,7 @@ export function useRepoActions(
           label: 'Push Branch…',
           icon: <IconUpload />,
           disabled: remotes.length === 0,
-          onClick: () => void pushBranch(name, isCurrent),
+          onClick: () => void pushBranch(name),
         },
         ...(isCurrent
           ? [
@@ -646,9 +686,9 @@ export function useRepoActions(
               submitLabel: 'Set Upstream',
             })
             if (v)
-              await run(`Set upstream of ${name} to ${v.upstream}`, 'setUpstream', {
+              await run(`Set upstream of ${name} to ${textValue(v, 'upstream')}`, 'setUpstream', {
                 branch: name,
-                upstream: v.upstream,
+                upstream: textValue(v, 'upstream'),
               })
           },
         },
@@ -693,7 +733,7 @@ export function useRepoActions(
             if (v)
               await run(`Checkout ${ref.name}`, 'checkoutRemoteBranch', {
                 remoteRef: ref.name,
-                localName: v.localName,
+                localName: textValue(v, 'localName'),
               })
           },
         },
@@ -742,7 +782,12 @@ export function useRepoActions(
                     ],
                     submitLabel: 'Pull',
                   })
-                  if (v) await run(`Pull ${ref.name}`, 'pull', { remote, branch, rebase: v.rebase })
+                  if (v)
+                    await run(`Pull ${ref.name}`, 'pull', {
+                      remote,
+                      branch,
+                      rebase: checkedValue(v, 'rebase'),
+                    })
                 },
               },
               'separator' as const,
@@ -788,8 +833,8 @@ export function useRepoActions(
             submitLabel: 'Push',
           })
           if (v)
-            await run(`Push tag ${ref.name} to ${v.remote}`, 'pushTag', {
-              remote: v.remote,
+            await run(`Push tag ${ref.name} to ${textValue(v, 'remote')}`, 'pushTag', {
+              remote: textValue(v, 'remote'),
               name: ref.name,
             })
         },
@@ -805,7 +850,7 @@ export function useRepoActions(
               ? [
                   {
                     type: 'checkbox',
-                    name: 'remote',
+                    name: 'deleteRemote',
                     label: 'Also delete the tag on a remote',
                     default: false,
                   },
@@ -817,9 +862,9 @@ export function useRepoActions(
           })
           if (!v) return
           const ok = await run(`Delete tag ${ref.name}`, 'deleteTag', { name: ref.name })
-          if (ok && v.remote)
-            await run(`Delete tag ${ref.name} on ${v.remote}`, 'deleteRemoteTag', {
-              remote: v.remote as string,
+          if (ok && checkedValue(v, 'deleteRemote'))
+            await run(`Delete tag ${ref.name} on ${textValue(v, 'remote')}`, 'deleteRemoteTag', {
+              remote: textValue(v, 'remote'),
               name: ref.name,
             })
         },
@@ -873,8 +918,8 @@ export function useRepoActions(
             validate: (val) => validateRefName(String(val.name)),
           })
           if (v)
-            await run(`Create branch ${v.name} from ${s.selector}`, 'stashBranch', {
-              name: v.name,
+            await run(`Create branch ${textValue(v, 'name')} from ${s.selector}`, 'stashBranch', {
+              name: textValue(v, 'name'),
               selector: s.selector,
             })
         },
@@ -906,42 +951,46 @@ export function useRepoActions(
       },
     ]
 
+    const discardAll = async () => {
+      const v = await dialog.open({
+        title: 'Discard all changes?',
+        description:
+          'All staged and unstaged changes to tracked files will be permanently lost (git reset --hard).',
+        fields: [
+          {
+            type: 'checkbox',
+            name: 'includeUntracked',
+            label: 'Also delete untracked files and directories (git clean -fd)',
+            default: false,
+          },
+        ],
+        submitLabel: 'Discard All',
+        danger: true,
+      })
+      if (!v) return false
+      return run('Discard all changes', 'discardAll', {
+        includeUntracked: checkedValue(v, 'includeUntracked'),
+      })
+    }
+
     const uncommittedMenu: RepoActions['uncommittedMenu'] = () => [
       { label: 'Stash Changes…', icon: <IconArchive />, onClick: () => void stash() },
       {
         label: 'Stage All Changes',
         icon: <IconPlus />,
-        onClick: () => void run('Stage all', 'stageAll'),
+        onClick: () => void run('Stage all', 'stageAll', {}),
       },
       {
         label: 'Unstage All Changes',
         icon: <IconMinus />,
-        onClick: () => void run('Unstage all', 'unstageAll'),
+        onClick: () => void run('Unstage all', 'unstageAll', {}),
       },
       'separator',
       {
         label: 'Discard All Changes…',
         icon: <IconEraser />,
         danger: true,
-        onClick: async () => {
-          const v = await dialog.open({
-            title: 'Discard all changes?',
-            description:
-              'All staged and unstaged changes to tracked files will be permanently lost (git reset --hard).',
-            fields: [
-              {
-                type: 'checkbox',
-                name: 'includeUntracked',
-                label: 'Also delete untracked files and directories (git clean -fd)',
-                default: false,
-              },
-            ],
-            submitLabel: 'Discard All',
-            danger: true,
-          })
-          if (v)
-            await run('Discard all changes', 'discardAll', { includeUntracked: v.includeUntracked })
-        },
+        onClick: () => void discardAll(),
       },
     ]
 
@@ -959,7 +1008,7 @@ export function useRepoActions(
         toast.show('error', 'Not on a branch', 'Check out a branch before pushing.')
         return false
       }
-      return pushBranch(current, true)
+      return pushBranch(current)
     }
 
     return {
@@ -972,11 +1021,10 @@ export function useRepoActions(
       pull,
       push,
       stash,
+      discardAll,
       createBranchAt,
       editUser,
       copy,
     }
   }, [repo, data, refresh, settings.fetchAndPrune, dialog, toast])
 }
-
-export const CompareIcon = IconGitCompare

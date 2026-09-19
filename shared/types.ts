@@ -43,7 +43,6 @@ export interface GitRef {
 
 export interface UncommittedFile {
   path: string
-  oldPath?: string
   /** index (staged) status letter, '.' when unchanged */
   index: string
   /** work-tree status letter, '.' when unchanged */
@@ -144,9 +143,6 @@ export interface CompareDetails {
   files: ChangedFile[]
 }
 
-/** Pseudo revisions accepted by the diff endpoints */
-export type PseudoRev = 'WORKING' | 'INDEX' | 'EMPTY' | 'HEAD'
-
 export interface FileDiffRequest {
   repo: string
   path: string
@@ -159,12 +155,6 @@ export interface FileDiffRequest {
 export interface FileDiffResponse {
   patch: string
   binary: boolean
-}
-
-export interface ActionRequest {
-  repo: string
-  action: string
-  args: Record<string, unknown>
 }
 
 export interface ActionResult {

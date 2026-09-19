@@ -6,7 +6,8 @@ import { existsSync } from 'node:fs'
 import { dirname, join, relative } from 'node:path'
 import { fileURLToPath } from 'node:url'
 import { spawn } from 'node:child_process'
-import type { ActionRequest, FileDiffRequest, GraphRequest } from '../shared/types.ts'
+import type { FileDiffRequest, GraphRequest } from '../shared/types.ts'
+import { decodeActionRequest } from '../shared/actions.ts'
 import { runAction } from './actions.ts'
 import { GitError } from './git.ts'
 import {
@@ -146,9 +147,9 @@ api.post('/file-content', async (c) => {
 })
 
 api.post('/action', async (c) => {
-  const body = (await c.req.json()) as ActionRequest
+  const body = decodeActionRequest(await c.req.json())
   const repo = getRepo(body.repo)
-  const output = await runAction(repo.path, body.action, body.args ?? {})
+  const output = await runAction(repo.path, body.action, body.args)
   return c.json({ ok: true, output })
 })
 
@@ -156,18 +157,20 @@ api.get('/events', async (c) => {
   const repoPath = c.req.query('repo')
   const repo = getRepo(repoPath)
   return streamSSE(c, async (stream) => {
-    let alive = true
     const unsubscribe = await subscribe(repo.path, () => {
       void stream.writeSSE({ event: 'change', data: repo.path })
     })
-    stream.onAbort(() => {
-      alive = false
+    stream.onAbort(unsubscribe)
+    try {
+      // onAbort does not replay an abort that happened while the watcher initialized.
+      if (stream.aborted) return
+      await stream.writeSSE({ event: 'ready', data: repo.path })
+      while (!stream.aborted) {
+        await stream.sleep(15_000)
+        if (!stream.aborted) await stream.writeSSE({ event: 'ping', data: String(Date.now()) })
+      }
+    } finally {
       unsubscribe()
-    })
-    await stream.writeSSE({ event: 'ready', data: repo.path })
-    while (alive) {
-      await stream.sleep(15_000)
-      if (alive) await stream.writeSSE({ event: 'ping', data: String(Date.now()) })
     }
   })
 })
@@ -212,14 +215,16 @@ async function main() {
 }
 
 function openBrowser(url: string) {
-  const cmd =
+  const [command, args]: [string, string[]] =
     process.platform === 'win32'
       ? ['cmd', ['/c', 'start', '', url]]
       : process.platform === 'darwin'
         ? ['open', [url]]
         : ['xdg-open', [url]]
   try {
-    spawn(cmd[0] as string, cmd[1] as string[], { detached: true, stdio: 'ignore' }).unref()
+    const child = spawn(command, args, { detached: true, stdio: 'ignore', windowsHide: true })
+    child.on('error', (error) => console.warn(`Could not open browser: ${error.message}`))
+    child.unref()
   } catch {
     /* ignore */
   }

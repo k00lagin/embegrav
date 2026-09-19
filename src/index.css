@@ -245,22 +245,6 @@ input[type='radio'] {
   background: var(--vscode-toolbar-hoverBackground);
 }
 
-.toolbar-btn {
-  display: flex;
-  align-items: center;
-  gap: 4px;
-  height: 26px;
-  padding: 0 8px;
-  border-radius: 2px;
-  background: var(--vscode-dropdown-background);
-  color: var(--vscode-dropdown-foreground);
-  border: 1px solid var(--vscode-dropdown-border);
-}
-.toolbar-btn:hover:not(:disabled),
-.toolbar-btn.open {
-  border-color: var(--vscode-focusBorder);
-}
-
 /* Commit table */
 .commit-table {
   border-collapse: collapse;

@@ -1,14 +1,16 @@
 import { useCallback, useEffect, useMemo, useRef, useState, type MouseEvent } from 'react'
-import type { CommitStats, GitCommit, GraphData, RepoInfo } from '@shared/types'
+import type { GitCommit, GraphRequest, RepoInfo } from '@shared/types'
 import { api, subscribeRepoEvents } from './api'
 import { layoutGraph } from './graph/layout'
 import { UNCOMMITTED, pluralize, shortHash } from './lib/format'
 import { loadLocal, saveLocal, useSettings } from './lib/settings'
 import { useRepoActions } from './hooks/useRepoActions'
+import { useRepoGraph } from './hooks/useRepoGraph'
 import { CommitDetails, type DetailsMode } from './components/CommitDetails'
 import { CommitTable, type TableRow } from './components/CommitTable'
 import { ContextMenu, type ContextMenuState, type MenuEntry } from './components/ContextMenu'
 import { DialogProvider, useDialog } from './components/Dialog'
+import { checkedValue, textValue } from './components/dialogValues'
 import { DiffViewer, type DiffTarget } from './components/DiffViewer'
 import type { LabelTarget } from './components/RefLabel'
 import { SettingsPanel } from './components/SettingsPanel'
@@ -43,28 +45,43 @@ function Main() {
   // ----- repositories ------------------------------------------------------
   const [repos, setRepos] = useState<RepoInfo[]>([])
   const [repo, setRepo] = useState<string | null>(null)
+  const activeRepo = useRef<string | null>(null)
+  const [menu, setMenu] = useState<ContextMenuState | null>(null)
   const [selectedState, setSelected] = useState<string | null>(null)
   const [compareState, setCompare] = useState<string | null>(null)
   const [diffState, setDiff] = useState<DiffTarget | null>(null)
   const [extraCommits, setExtraCommits] = useState(0)
   const [branches, setBranchesState] = useState<string[] | null>(null)
-  /** Per-commit change summaries; hashes are immutable so entries never go stale */
-  const [stats, setStats] = useState<Record<string, CommitStats>>({})
   const selectRepo = useCallback((path: string | null) => {
+    activeRepo.current = path
     setRepo(path)
-    setBranchesState(path ? loadLocal<string[] | null>(`branches:${path}`, null) : null)
+    setMenu(null)
+    setBranchesState(
+      path
+        ? loadLocal(
+            `branches:${path}`,
+            null,
+            (value): value is string[] | null =>
+              value === null ||
+              (Array.isArray(value) && value.every((branch) => typeof branch === 'string')),
+          )
+        : null,
+    )
     setSelected(null)
     setCompare(null)
     setDiff(null)
     setExtraCommits(0)
-    setStats({})
   }, [])
   useEffect(() => {
     api
       .repos()
       .then((r) => {
         setRepos(r.repos)
-        const last = loadLocal<string | null>('lastRepo', null)
+        const last = loadLocal(
+          'lastRepo',
+          null,
+          (value): value is string | null => value === null || typeof value === 'string',
+        )
         selectRepo(r.repos.find((x) => x.path === last)?.path ?? r.repos[0]?.path ?? null)
       })
       .catch((e: Error) => toast.show('error', 'Could not load repositories', e.message))
@@ -92,7 +109,7 @@ function Main() {
   const removeRepo = async (path: string) => {
     const r = await api.removeRepo(path)
     setRepos(r.repos)
-    if (repo === path) selectRepo(r.repos[0]?.path ?? null)
+    if (activeRepo.current === path) selectRepo(r.repos[0]?.path ?? null)
   }
 
   // ----- graph data --------------------------------------------------------
@@ -101,54 +118,31 @@ function Main() {
     if (repo) saveLocal(`branches:${repo}`, b)
   }
 
-  const [data, setData] = useState<GraphData | null>(null)
-  const [loading, setLoading] = useState(false)
-  const [error, setError] = useState<string | null>(null)
-  const [version, setVersion] = useState(0)
-  const requestSeq = useRef(0)
-
-  const load = useCallback(async () => {
-    if (!repo) {
-      setData(null)
-      return
-    }
-    const seq = ++requestSeq.current
-    setLoading(true)
-    try {
-      const d = await api.graph({
-        repo,
-        maxCommits: settings.maxCommits + extraCommits,
-        showRemoteBranches: settings.showRemoteBranches,
-        branches,
-        order: settings.order,
-        showStashes: settings.showStashes,
-        showTags: settings.showTags,
-      })
-      if (seq !== requestSeq.current) return
-      setData(d)
-      setError(null)
-      setVersion((v) => v + 1)
-    } catch (e) {
-      if (seq !== requestSeq.current) return
-      setError((e as Error).message)
-    } finally {
-      if (seq === requestSeq.current) setLoading(false)
-    }
-  }, [
-    repo,
-    settings.maxCommits,
-    settings.showRemoteBranches,
-    settings.order,
-    settings.showStashes,
-    settings.showTags,
-    branches,
-    extraCommits,
-  ])
-
-  useEffect(() => {
-    // oxlint-disable-next-line react/set-state-in-effect -- data fetch synchronised with the server
-    void load()
-  }, [load])
+  const graphRequest = useMemo<GraphRequest | null>(
+    () =>
+      repo
+        ? {
+            repo,
+            maxCommits: settings.maxCommits + extraCommits,
+            showRemoteBranches: settings.showRemoteBranches,
+            branches,
+            order: settings.order,
+            showStashes: settings.showStashes,
+            showTags: settings.showTags,
+          }
+        : null,
+    [
+      repo,
+      settings.maxCommits,
+      settings.showRemoteBranches,
+      settings.order,
+      settings.showStashes,
+      settings.showTags,
+      branches,
+      extraCommits,
+    ],
+  )
+  const { data, loading, error, version, stats, refresh } = useRepoGraph(graphRequest)
 
   // Auto refresh via server-sent events (debounced)
   useEffect(() => {
@@ -156,38 +150,15 @@ function Main() {
     let timer: ReturnType<typeof setTimeout> | null = null
     const unsubscribe = subscribeRepoEvents(repo, () => {
       if (timer) clearTimeout(timer)
-      timer = setTimeout(() => void load(), 300)
+      timer = setTimeout(refresh, 300)
     })
     return () => {
       unsubscribe()
       if (timer) clearTimeout(timer)
     }
-  }, [repo, settings.autoRefresh, load])
+  }, [repo, settings.autoRefresh, refresh])
 
-  const refresh = useCallback(() => void load(), [load])
   const actions = useRepoActions(repo, data, refresh, settings)
-
-  // Load change summaries for commits that do not have them yet (the uncommitted
-  // row is always re-requested because the working tree changes).
-  useEffect(() => {
-    if (!repo || !data) return
-    const missing = data.commits.map((c) => c.hash).filter((h) => !(h in stats))
-    if (data.uncommitted.length > 0) missing.push(UNCOMMITTED)
-    if (missing.length === 0) return
-    let cancelled = false
-    api
-      .stats(repo, missing)
-      .then((r) => {
-        if (!cancelled) setStats((prev) => ({ ...prev, ...r.stats }))
-      })
-      .catch(() => {
-        /* stats are optional; the column just stays empty */
-      })
-    return () => {
-      cancelled = true
-    }
-    // eslint-disable-next-line react-hooks/exhaustive-deps -- `stats` is a cache, not a trigger
-  }, [repo, data])
 
   // ----- rows + graph layout ----------------------------------------------
   const { rows, maxLanes } = useMemo(() => {
@@ -218,9 +189,15 @@ function Main() {
   }, [data, settings.showUncommitted])
 
   // ----- selection ---------------------------------------------------------
-  const [menu, setMenu] = useState<ContextMenuState | null>(null)
   const [settingsOpen, setSettingsOpen] = useState(false)
-  const [splitWidth, setSplitWidth] = useState(() => loadLocal<number>('splitWidth', 520))
+  const [splitWidth, setSplitWidth] = useState(() =>
+    loadLocal(
+      'splitWidth',
+      520,
+      (value): value is number =>
+        typeof value === 'number' && Number.isFinite(value) && value >= 320,
+    ),
+  )
 
   // Drop the selection if the commit disappeared (e.g. uncommitted row gone after a commit)
   const rowExists = (h: string | null) => h !== null && rows.some((r) => r.commit.hash === h)
@@ -386,10 +363,13 @@ function Main() {
             : null,
     })
     if (!v) return
-    const ok = await actions.run(`Add remote ${v.name}`, 'addRemote', { name: v.name, url: v.url })
-    if (ok && v.fetch)
+    const ok = await actions.run(`Add remote ${v.name}`, 'addRemote', {
+      name: textValue(v, 'name'),
+      url: textValue(v, 'url'),
+    })
+    if (ok && checkedValue(v, 'fetch'))
       await actions.run(`Fetch ${v.name}`, 'fetch', {
-        remote: v.name,
+        remote: textValue(v, 'name'),
         prune: settings.fetchAndPrune,
       })
   }
@@ -406,8 +386,8 @@ function Main() {
     if (v)
       await actions.run(`Edit remote ${name}`, 'editRemote', {
         name,
-        newName: v.newName,
-        url: v.url,
+        newName: textValue(v, 'newName'),
+        url: textValue(v, 'url'),
       })
   }
   const removeRemote = async (name: string) => {
@@ -437,6 +417,7 @@ function Main() {
   const detailsElement = (layout: 'row' | 'column') =>
     detailsMode && repo && data ? (
       <CommitDetails
+        key={repo}
         repo={repo}
         mode={detailsMode}
         data={data}
@@ -524,9 +505,7 @@ function Main() {
               type="button"
               className="btn btn-secondary"
               onClick={() =>
-                void actions
-                  .run('Commit merge', 'commit', { message: '', amend: false, allowEmpty: true })
-                  .catch(() => undefined)
+                void actions.run('Commit merge', 'commit', { messageMode: 'prepared' })
               }
               title="Commit the merge with the default message (stage resolved files first)"
             >

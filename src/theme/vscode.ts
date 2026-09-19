@@ -286,14 +286,32 @@ export function applyTheme(theme: VsCodeTheme): void {
 
 /** Parse VS Code theme JSON, tolerating comments and trailing commas (JSONC). */
 export function parseThemeJson(text: string): VsCodeTheme {
-  const stripped = stripJsonComments(text).replace(/,\s*([}\]])/g, '$1')
+  const stripped = stripJsonComments(text)
   const parsed = JSON.parse(stripped) as unknown
-  if (!parsed || typeof parsed !== 'object') throw new Error('Theme file must be a JSON object')
-  const theme = parsed as VsCodeTheme
-  if (!theme.colors || typeof theme.colors !== 'object') {
+  if (!isRecord(parsed)) throw new Error('Theme file must be a JSON object')
+  if (!isRecord(parsed.colors)) {
     throw new Error('Theme file has no "colors" section')
   }
-  return theme
+  if (Object.values(parsed.colors).some((value) => typeof value !== 'string')) {
+    throw new Error('Theme colors must be strings')
+  }
+  if (parsed.name !== undefined && typeof parsed.name !== 'string') {
+    throw new Error('Theme name must be a string')
+  }
+  if (
+    parsed.type !== undefined &&
+    (typeof parsed.type !== 'string' || !['dark', 'light', 'hc', 'hcLight'].includes(parsed.type))
+  ) {
+    throw new Error('Invalid theme type')
+  }
+  if (parsed.tokenColors !== undefined && !Array.isArray(parsed.tokenColors)) {
+    throw new Error('Theme tokenColors must be an array')
+  }
+  return parsed as VsCodeTheme
+}
+
+function isRecord(value: unknown): value is Record<string, unknown> {
+  return value !== null && typeof value === 'object' && !Array.isArray(value)
 }
 
 function stripJsonComments(text: string): string {
@@ -319,7 +337,12 @@ function stripJsonComments(text: string): string {
     } else if (ch === '/' && next === '*') {
       i += 2
       while (i < text.length && !(text[i] === '*' && text[i + 1] === '/')) i++
+      if (i === text.length) throw new Error('Unterminated theme comment')
       i++
+      out += ' '
+    } else if (ch === '}' || ch === ']') {
+      // Only outside strings, after comments have been removed.
+      out = out.replace(/,\s*$/, '') + ch
     } else {
       out += ch
     }
@@ -333,8 +356,7 @@ export function loadStoredTheme(): VsCodeTheme | null {
   try {
     const raw = localStorage.getItem(STORAGE_KEY)
     if (!raw) return null
-    const t = JSON.parse(raw) as VsCodeTheme
-    return t && typeof t === 'object' ? t : null
+    return parseThemeJson(raw)
   } catch {
     return null
   }

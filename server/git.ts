@@ -140,19 +140,3 @@ export function assertSafeArg(value: unknown, label: string): string {
 export function optionalString(value: unknown): string | undefined {
   return typeof value === 'string' && value.length > 0 ? value : undefined
 }
-
-export function bool(value: unknown): boolean {
-  return value === true || value === 'true'
-}
-
-export function stringArray(value: unknown, label: string): string[] {
-  if (!Array.isArray(value) || value.length === 0) {
-    throw new Error(`${label} must be a non-empty array`)
-  }
-  return value.map((v) => {
-    if (typeof v !== 'string' || v.length === 0 || /[\0\n\r]/.test(v)) {
-      throw new Error(`${label} contains an invalid entry`)
-    }
-    return v
-  })
-}

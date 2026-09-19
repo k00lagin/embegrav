@@ -14,6 +14,10 @@ interface Props {
   onEditUser: () => void
 }
 
+type BooleanSetting = {
+  [Key in keyof Settings]: Settings[Key] extends boolean ? Key : never
+}[keyof Settings]
+
 export function SettingsPanel({
   settings,
   onChange,
@@ -26,13 +30,13 @@ export function SettingsPanel({
   const fileInput = useRef<HTMLInputElement>(null)
   const [themeError, setThemeError] = useState<string | null>(null)
 
-  const check = (key: keyof Settings, label: string, description?: string) => (
+  const check = (key: BooleanSetting, label: string, description?: string) => (
     <label className="flex items-start gap-2 cursor-pointer">
       <input
         type="checkbox"
         className="mt-1"
-        checked={Boolean(settings[key])}
-        onChange={(e) => onChange({ [key]: e.target.checked } as Partial<Settings>)}
+        checked={settings[key]}
+        onChange={(e) => onChange({ [key]: e.target.checked })}
       />
       <span>
         {label}
