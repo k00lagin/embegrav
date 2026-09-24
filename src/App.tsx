@@ -272,8 +272,11 @@ function Main() {
       }
       return
     }
-    // Clicking the selected row again keeps it open; Esc or the close button close details.
     if (hash !== selected || compare) openDetails(hash)
+    else if (settings.commitView === 'unified') {
+      setSelected(null)
+      setDiff(null)
+    }
   }
 
   const onRowKeyDown = (e: ReactKeyboardEvent, hash: string) => {

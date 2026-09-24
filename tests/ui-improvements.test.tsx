@@ -140,13 +140,29 @@ it('merges a local branch label with its identical upstream and keeps diverged o
   expect(within(row(C)).getByText('origin/feature/search')).toBeTruthy()
 })
 
-it('keeps details open when the selected row is clicked again and closes them with Esc', async () => {
+it('toggles unified details by clicking the selected row and still closes them with Esc', async () => {
   render(<App />)
   fireEvent.click(await screen.findByText('Add search'))
   expect(await screen.findByText('Details of Add search')).toBeTruthy()
   fireEvent.click(screen.getByText('Add search'))
-  expect(screen.getByText('Details of Add search')).toBeTruthy()
+  expect(screen.queryByText('Details of Add search')).toBeNull()
+  fireEvent.click(screen.getByText('Add search'))
+  expect(await screen.findByText('Details of Add search')).toBeTruthy()
   fireEvent.keyDown(row(B), { key: 'Escape' })
+  expect(screen.queryByText('Details of Add search')).toBeNull()
+})
+
+it('keeps split details open on repeated row clicks until the close button is clicked', async () => {
+  localStorage.setItem(
+    'embegrav.settings',
+    JSON.stringify({ ...DEFAULT_SETTINGS, autoRefresh: false, commitView: 'split' }),
+  )
+  render(<App />)
+  fireEvent.click(await screen.findByText('Add search'))
+  expect(await screen.findByText('Details of Add search')).toBeTruthy()
+  fireEvent.click(row(B))
+  expect(screen.getByText('Details of Add search')).toBeTruthy()
+  fireEvent.click(screen.getByRole('button', { name: 'Close details (Esc)' }))
   expect(screen.queryByText('Details of Add search')).toBeNull()
 })
 
