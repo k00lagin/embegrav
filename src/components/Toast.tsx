@@ -97,6 +97,7 @@ export function ToastProvider({ children }: { children: ReactNode }) {
         {toasts.map((t) => (
           <div
             key={t.id}
+            role={t.kind === 'error' ? 'alert' : 'status'}
             className={`rounded-md border shadow-xl px-3 py-2 flex gap-2 items-start bg-bg-3 ${
               t.kind === 'error'
                 ? 'border-danger'

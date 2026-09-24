@@ -191,6 +191,8 @@ it('refreshes detail data by version, suppresses stale responses, and recovers a
   expect(screen.queryByText('Stale details')).toBeNull()
   await act(async () => current.reject(new Error('Detail unavailable')))
   expect(screen.getByText('Detail unavailable')).toBeTruthy()
+  expect(screen.getByRole('alert').textContent).toContain('Could not load commit details')
+  expect(screen.queryByText('Loading…')).toBeNull()
   vi.mocked(api.commit).mockResolvedValue({
     hash: 'abc',
     subject: 'Current details',
@@ -204,8 +206,9 @@ it('refreshes detail data by version, suppresses stale responses, and recovers a
     body: '',
     files: [],
   })
-  rerender(view(2))
+  fireEvent.click(screen.getByRole('button', { name: 'Retry' }))
   expect(await screen.findByText('Current details')).toBeTruthy()
+  expect(screen.queryByRole('alert')).toBeNull()
   expect(api.commit).toHaveBeenCalledTimes(3)
 })
 

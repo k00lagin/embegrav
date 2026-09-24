@@ -7,6 +7,7 @@ import {
   renderHook,
   screen,
   waitFor,
+  within,
 } from '@testing-library/react'
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 import type { GraphData, GraphRequest } from '@shared/types'
@@ -253,6 +254,61 @@ it('removing the active repository keeps the empty App clear when its request fi
   await act(async () => pending.resolve(graph('removed-branch')))
   expect(screen.queryByText('removed-branch')).toBeNull()
   expect(screen.getByRole('button', { name: 'Select repository' })).toBeTruthy()
+})
+
+it('shows graph errors only in a toast, preserves loaded data, and retries repeated failures', async () => {
+  vi.spyOn(api, 'repos').mockResolvedValue({ repos: [{ path: 'A', name: 'Repo A' }] })
+  vi.spyOn(api, 'graph')
+    .mockResolvedValueOnce(graph('branch-A'))
+    .mockRejectedValueOnce(new Error('Failed to fetch'))
+    .mockRejectedValueOnce(new Error('Failed to fetch'))
+    .mockResolvedValue(graph('recovered-A'))
+  render(<App />)
+  await screen.findByText('branch-A')
+  fireEvent.keyDown(window, { key: 'F5' })
+  const alert = await screen.findByRole('alert')
+  expect(within(alert).getByText('Failed to fetch')).toBeTruthy()
+  expect(screen.getAllByText('Failed to fetch')).toHaveLength(1)
+  expect(screen.getByText('branch-A')).toBeTruthy()
+  fireEvent.click(within(alert).getByRole('button', { name: 'Retry' }))
+  const repeated = await screen.findByRole('alert')
+  expect(within(repeated).getByText('Failed to fetch')).toBeTruthy()
+  fireEvent.click(within(repeated).getByRole('button', { name: 'Retry' }))
+  await screen.findByText('recovered-A')
+  expect(screen.queryByRole('alert')).toBeNull()
+  expect(api.graph).toHaveBeenCalledTimes(4)
+})
+
+it('dismisses graph load errors when selecting another repository', async () => {
+  vi.spyOn(api, 'repos').mockResolvedValue({
+    repos: [
+      { path: 'A', name: 'Repo A' },
+      { path: 'B', name: 'Repo B' },
+    ],
+  })
+  vi.spyOn(api, 'graph')
+    .mockRejectedValueOnce(new Error('A unavailable'))
+    .mockResolvedValue(graph('branch-B'))
+  render(<App />)
+  await screen.findByRole('alert')
+  expect(screen.queryByText('Loading repository…')).toBeNull()
+  fireEvent.click(screen.getByRole('button', { name: 'Repo A' }))
+  fireEvent.click(screen.getByRole('button', { name: 'Repo BB' }))
+  await screen.findByText('branch-B')
+  expect(screen.queryByRole('alert')).toBeNull()
+})
+
+it('reports removal failures without dropping the current repository', async () => {
+  vi.spyOn(api, 'repos').mockResolvedValue({ repos: [{ path: 'A', name: 'Repo A' }] })
+  vi.spyOn(api, 'graph').mockResolvedValue(graph('branch-A'))
+  vi.spyOn(api, 'removeRepo').mockRejectedValue(new Error('Server unavailable'))
+  render(<App />)
+  await screen.findByText('branch-A')
+  fireEvent.click(screen.getByRole('button', { name: 'Repo A' }))
+  fireEvent.click(screen.getByRole('button', { name: 'Remove from list' }))
+  expect((await screen.findByRole('alert')).textContent).toContain('Could not remove repository')
+  expect(screen.getByText('branch-A')).toBeTruthy()
+  expect(screen.queryByRole('button', { name: 'Undo' })).toBeNull()
 })
 
 it('does not change the new selection when removal of the previously selected repo finishes', async () => {

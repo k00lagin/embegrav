@@ -10,6 +10,7 @@ import { api } from '@/api'
 import { formatFullDate, shortHash } from '@/lib/format'
 import { loadLocal, saveLocal } from '@/lib/settings'
 import type { RepoActions } from '@/hooks/useRepoActions'
+import { useErrorToast } from '@/hooks/useErrorToast'
 import { ChangedFilesTree, type RowAction } from './ChangedFilesTree'
 import type { DiffTarget } from './DiffViewer'
 import type { MenuEntry } from './ContextMenu'
@@ -105,25 +106,32 @@ function layoutClasses(layout: DetailsLayout) {
       }
 }
 
-function useLoader<T>(load: () => Promise<T>, version: number) {
+function useLoader<T>(load: () => Promise<T>, version: number, title: string) {
+  const [attempt, setAttempt] = useState(0)
+  const retry = useCallback(() => setAttempt((value) => value + 1), [])
   const [state, setState] = useState<{
     load: typeof load
     version: number
+    attempt: number
     data: T | null
     error: string | null
   } | null>(null)
   useEffect(() => {
     let cancelled = false
     void load()
-      .then((data) => !cancelled && setState({ load, version, data, error: null }))
-      .catch((e: Error) => !cancelled && setState({ load, version, data: null, error: e.message }))
+      .then((data) => !cancelled && setState({ load, version, attempt, data, error: null }))
+      .catch(
+        (e: Error) =>
+          !cancelled && setState({ load, version, attempt, data: null, error: e.message }),
+      )
     return () => {
       cancelled = true
     }
-  }, [load, version])
+  }, [load, version, attempt])
   // Keep the current view mounted during background refreshes so text entry,
   // focus, and tree expansion survive. A new resource identity starts empty.
-  const current = state?.load === load && state.version === version
+  const current = state?.load === load && state.version === version && state.attempt === attempt
+  useErrorToast(current ? state.error : null, title, retry)
   return state?.load === load
     ? { data: state.data, error: current ? state.error : null, current }
     : { data: null, error: null, current: false }
@@ -135,10 +143,6 @@ function Loading() {
       <IconLoader className="animate-spin" /> Loading…
     </div>
   )
-}
-
-function ErrorBox({ message }: { message: string }) {
-  return <div className="p-3 text-danger whitespace-pre-wrap">{message}</div>
 }
 
 function Person({ name, email }: { name: string; email: string }) {
@@ -162,11 +166,11 @@ function CommitView({
   layout,
 }: Props & { hash: string; layout: DetailsLayout }) {
   const load = useCallback(() => api.commit(repo, hash), [repo, hash])
-  const state = useLoader<CommitDetailsData>(load, version)
+  const state = useLoader<CommitDetailsData>(load, version, 'Could not load commit details')
   const d = state.data
   const refsHere = useMemo(() => data.refs.filter((r) => r.hash === hash), [data.refs, hash])
   const cls = layoutClasses(layout)
-  if (state.error) return <ErrorBox message={state.error} />
+  if (state.error) return null
   if (!d) return <Loading />
   const from = d.parents[0] ?? 'EMPTY'
   return (
@@ -287,9 +291,9 @@ function CompareView({
   layout,
 }: Props & { from: string; to: string; layout: DetailsLayout }) {
   const load = useCallback(() => api.compare(repo, from, to), [repo, from, to])
-  const state = useLoader<CompareDetails>(load, version)
+  const state = useLoader<CompareDetails>(load, version, 'Could not compare commits')
   const cls = layoutClasses(layout)
-  if (state.error) return <ErrorBox message={state.error} />
+  if (state.error) return null
   if (!state.data) return <Loading />
   const files = state.data.files
   return (
@@ -345,7 +349,7 @@ function UncommittedView({
   layout,
 }: Props & { layout: DetailsLayout }) {
   const load = useCallback(() => api.uncommitted(repo), [repo])
-  const state = useLoader<UncommittedDetails>(load, version)
+  const state = useLoader<UncommittedDetails>(load, version, 'Could not load uncommitted changes')
   const cls = layoutClasses(layout)
   const treeRows = layout === 'column' ? 20 : 10
   const dialog = useDialog()
@@ -561,7 +565,7 @@ function UncommittedView({
     if (ok) await actions.run(`Discard ${path}`, 'discard', { paths: [path] })
   }
 
-  if (state.error) return <ErrorBox message={state.error} />
+  if (state.error) return null
   if (!d) return <Loading />
 
   return (

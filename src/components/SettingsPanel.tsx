@@ -1,7 +1,8 @@
-import { useRef, useState } from 'react'
+import { useRef } from 'react'
 import type { Settings } from '@/lib/settings'
 import { BUILT_IN_THEMES, useTheme } from '@/theme/ThemeProvider'
 import { parseThemeJson } from '@/theme/vscode'
+import { useToast } from './Toast'
 import IconX from '~icons/lucide/x'
 import IconUpload from '~icons/lucide/upload'
 
@@ -28,7 +29,7 @@ export function SettingsPanel({
 }: Props) {
   const theme = useTheme()
   const fileInput = useRef<HTMLInputElement>(null)
-  const [themeError, setThemeError] = useState<string | null>(null)
+  const toast = useToast()
 
   const check = (key: BooleanSetting, label: string, description?: string) => (
     <label className="flex items-start gap-2 cursor-pointer">
@@ -50,9 +51,8 @@ export function SettingsPanel({
       const parsed = parseThemeJson(await file.text())
       if (!parsed.name) parsed.name = file.name.replace(/\.[^.]+$/, '')
       theme.setTheme(parsed)
-      setThemeError(null)
     } catch (e) {
-      setThemeError((e as Error).message)
+      toast.show('error', 'Could not import theme', (e as Error).message)
     }
   }
 
@@ -210,7 +210,6 @@ export function SettingsPanel({
               <span className="mono">--vscode-*</span> CSS variables and its{' '}
               <span className="mono">tokenColors</span> drive syntax highlighting in diffs.
             </div>
-            {themeError && <div className="text-danger text-xs">{themeError}</div>}
           </section>
 
           <section className="flex flex-col gap-2">

@@ -16,6 +16,7 @@ import { COLUMNS, useColumnLayout } from './lib/columns'
 import { parentPath } from './lib/paths'
 import { useRepoActions } from './hooks/useRepoActions'
 import { useRepoGraph } from './hooks/useRepoGraph'
+import { useErrorToast } from './hooks/useErrorToast'
 import { CommitDetails, type DetailsMode } from './components/CommitDetails'
 import { CommitTable, type TableRow } from './components/CommitTable'
 import { ContextMenu, type ContextMenuState, type MenuEntry } from './components/ContextMenu'
@@ -126,13 +127,17 @@ function Main() {
   const removeRepo = async (path: string) => {
     const name = repos.find((r) => r.path === path)?.name ?? path
     const wasActive = activeRepo.current === path
-    const r = await api.removeRepo(path)
-    setRepos(r.repos)
-    if (activeRepo.current === path) selectRepo(r.repos[0]?.path ?? null)
-    toast.show('info', `Removed ${name} from the list`, undefined, 8000, {
-      label: 'Undo',
-      onClick: () => void restoreRepo(path, wasActive),
-    })
+    try {
+      const r = await api.removeRepo(path)
+      setRepos(r.repos)
+      if (activeRepo.current === path) selectRepo(r.repos[0]?.path ?? null)
+      toast.show('info', `Removed ${name} from the list`, undefined, 8000, {
+        label: 'Undo',
+        onClick: () => void restoreRepo(path, wasActive),
+      })
+    } catch (e) {
+      toast.show('error', 'Could not remove repository', (e as Error).message)
+    }
   }
 
   // ----- graph data --------------------------------------------------------
@@ -166,6 +171,7 @@ function Main() {
     ],
   )
   const { data, loading, error, version, stats, refresh } = useRepoGraph(graphRequest)
+  useErrorToast(error, 'Could not load repository', refresh)
 
   // Auto refresh via server-sent events (debounced)
   useEffect(() => {
@@ -644,14 +650,6 @@ function Main() {
 
       <div className="flex-1 min-h-0 relative flex">
         <div className="flex-1 min-w-0 overflow-auto">
-          {error && (
-            <div className="p-4 text-danger flex flex-col gap-2">
-              <div className="whitespace-pre-wrap">{error}</div>
-              <button type="button" className="btn btn-secondary self-start" onClick={refresh}>
-                Retry
-              </button>
-            </div>
-          )}
           {!error && !data && repo && (
             <div className="p-4 text-fg-muted flex items-center gap-2">
               <IconLoader className="animate-spin" /> Loading repository…

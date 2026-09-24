@@ -7,6 +7,7 @@ import { join, sep } from 'node:path'
 import type { DirectoryListing } from '@shared/types'
 import { api } from '@/api'
 import { RepoPicker } from '@/components/RepoPicker'
+import { ToastProvider } from '@/components/Toast'
 import { childPath, directoryPart, leafPart, parentPath } from '@/lib/paths'
 import { browse } from '../server/browse.ts'
 
@@ -88,7 +89,9 @@ describe('RepoPicker', () => {
 
   it('navigates with the keyboard and adds the typed path', async () => {
     const onSubmit = vi.fn(async () => {})
-    render(<RepoPicker initialPath="/src/" onSubmit={onSubmit} onClose={() => {}} />)
+    render(<RepoPicker initialPath="/src/" onSubmit={onSubmit} onClose={() => {}} />, {
+      wrapper: ToastProvider,
+    })
     const input = screen.getByLabelText('Repository path')
     await screen.findByText('docs')
 
@@ -104,21 +107,29 @@ describe('RepoPicker', () => {
     await waitFor(() => expect(onSubmit).toHaveBeenCalledWith('/src/'))
   })
 
-  it('adds a repository entry directly and keeps errors inside the picker', async () => {
+  it('shows add failures in a toast and keeps the picker open', async () => {
     const onSubmit = vi.fn(async () => {
       throw new Error('No git repository found at /src/app')
     })
-    render(<RepoPicker initialPath="/src/" onSubmit={onSubmit} onClose={() => {}} />)
+    render(<RepoPicker initialPath="/src/" onSubmit={onSubmit} onClose={() => {}} />, {
+      wrapper: ToastProvider,
+    })
     await screen.findByText('app')
     const row = screen.getByRole('option', { name: /app/ })
     fireEvent.click(within(row).getByRole('button', { name: 'Add' }))
     await waitFor(() => expect(onSubmit).toHaveBeenCalledWith('/src/app'))
-    await screen.findByText('No git repository found at /src/app')
+    expect(await screen.findByRole('alert')).toHaveProperty(
+      'textContent',
+      'Could not add repositoryNo git repository found at /src/app',
+    )
+    expect(screen.getByLabelText('Repository path')).toBeTruthy()
   })
 
   it('starts in the home directory when there is no current repository', async () => {
     vi.spyOn(api, 'browseHome').mockResolvedValue({ path: '/src/' })
-    render(<RepoPicker initialPath={null} onSubmit={async () => {}} onClose={() => {}} />)
+    render(<RepoPicker initialPath={null} onSubmit={async () => {}} onClose={() => {}} />, {
+      wrapper: ToastProvider,
+    })
     expect(await screen.findByLabelText('Repository path')).toHaveProperty('value', '/src/')
     await screen.findByText('app')
   })

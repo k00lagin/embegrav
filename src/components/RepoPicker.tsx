@@ -2,6 +2,7 @@ import { useEffect, useRef, useState, type KeyboardEvent as ReactKeyboardEvent }
 import type { DirectoryListing } from '@shared/types'
 import { api } from '@/api'
 import { childPath, directoryPart, parentPath } from '@/lib/paths'
+import { useToast } from './Toast'
 import IconX from '~icons/lucide/x'
 import IconFolder from '~icons/lucide/folder'
 import IconFolderGit from '~icons/lucide/folder-git-2'
@@ -11,12 +12,13 @@ import IconLoader from '~icons/lucide/loader-circle'
 interface Props {
   /** Path to start browsing from; the home directory when null */
   initialPath: string | null
-  /** Register the path; a rejection is shown in the picker, which stays open */
+  /** Register the path; a rejection is shown in a toast and the picker stays open */
   onSubmit: (path: string) => Promise<void>
   onClose: () => void
 }
 
 export function RepoPicker({ initialPath, onSubmit, onClose }: Props) {
+  const toast = useToast()
   const [input, setInput] = useState(initialPath ?? '')
   const [listing, setListing] = useState<DirectoryListing | null>(null)
   const [highlighted, setHighlighted] = useState(0)
@@ -31,11 +33,17 @@ export function RepoPicker({ initialPath, onSubmit, onClose }: Props) {
 
   useEffect(() => {
     if (initialPath !== null) return
+    let cancelled = false
     api
       .browseHome()
-      .then((r) => setInput((current) => current || r.path))
-      .catch((e: Error) => setError(e.message))
-  }, [initialPath])
+      .then((r) => !cancelled && setInput((current) => current || r.path))
+      .catch((e: Error) => {
+        if (!cancelled) toast.show('error', 'Could not load home directory', e.message)
+      })
+    return () => {
+      cancelled = true
+    }
+  }, [initialPath, toast])
 
   useEffect(() => {
     if (!input.trim()) return
@@ -81,7 +89,7 @@ export function RepoPicker({ initialPath, onSubmit, onClose }: Props) {
     try {
       await onSubmit(path.trim())
     } catch (e) {
-      setError((e as Error).message)
+      toast.show('error', 'Could not add repository', (e as Error).message)
     } finally {
       setSubmitting(false)
     }

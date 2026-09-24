@@ -1,9 +1,10 @@
-import { useEffect, useMemo, useState } from 'react'
+import { useCallback, useEffect, useMemo, useState } from 'react'
 import { PatchDiff, type FileDiffOptions } from '@pierre/diffs/react'
 import type { ChangedFile } from '@shared/types'
 import { api } from '@/api'
 import { useTheme } from '@/theme/ThemeProvider'
 import { shikiThemeFor } from '@/theme/vscode'
+import { useErrorToast } from '@/hooks/useErrorToast'
 import IconX from '~icons/lucide/x'
 import IconColumns2 from '~icons/lucide/columns-2'
 import IconRows3 from '~icons/lucide/rows-3'
@@ -40,9 +41,21 @@ const STATUS_LABEL: Record<string, string> = {
 }
 
 export function DiffViewer({ repo, target, diffStyle, onDiffStyleChange, onClose }: Props) {
-  const [patch, setPatch] = useState<string | null>(null)
-  const [binary, setBinary] = useState(false)
-  const [error, setError] = useState<string | null>(null)
+  const [attempt, setAttempt] = useState(0)
+  const retry = useCallback(() => setAttempt((value) => value + 1), [])
+  const [state, setState] = useState<{
+    repo: string
+    target: DiffTarget
+    attempt: number
+    patch: string | null
+    binary: boolean
+    error: string | null
+  } | null>(null)
+  const current = state?.repo === repo && state.target === target && state.attempt === attempt
+  const patch = current ? state.patch : null
+  const binary = current ? state.binary : false
+  const error = current ? state.error : null
+  useErrorToast(error, `Could not load diff for ${target.file.path}`, retry)
   const [wrap, setWrap] = useState(false)
   const { resolved, isLight } = useTheme()
 
@@ -59,14 +72,16 @@ export function DiffViewer({ repo, target, diffStyle, onDiffStyleChange, onClose
       })
       .then((r) => {
         if (cancelled) return
-        setPatch(r.patch)
-        setBinary(r.binary)
+        setState({ repo, target, attempt, patch: r.patch, binary: r.binary, error: null })
       })
-      .catch((e: Error) => !cancelled && setError(e.message))
+      .catch((e: Error) => {
+        if (!cancelled)
+          setState({ repo, target, attempt, patch: null, binary: false, error: e.message })
+      })
     return () => {
       cancelled = true
     }
-  }, [repo, target])
+  }, [repo, target, attempt])
 
   useEffect(() => {
     const onKey = (e: KeyboardEvent) => {
@@ -154,7 +169,6 @@ export function DiffViewer({ repo, target, diffStyle, onDiffStyleChange, onClose
         </button>
       </div>
       <div className="flex-1 min-h-0 overflow-auto">
-        {error && <div className="p-4 text-danger whitespace-pre-wrap">{error}</div>}
         {!error && patch === null && (
           <div className="p-4 text-fg-muted flex items-center gap-2">
             <IconLoader className="animate-spin" /> Loading diff…
