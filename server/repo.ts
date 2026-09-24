@@ -132,7 +132,7 @@ function toGitCommit(r: CommitRecord<(typeof GRAPH_FIELDS)[number]>): GitCommit 
 export async function getRefs(repo: string): Promise<GitRef[]> {
   const out = await git(repo, [
     'for-each-ref',
-    '--format=%(objectname)%00%(refname)%00%(*objectname)%00%(upstream:remotename)',
+    '--format=%(objectname)%00%(refname)%00%(*objectname)%00%(upstream:remotename)%00%(upstream:short)',
     'refs/heads',
     'refs/remotes',
     'refs/tags',
@@ -140,13 +140,14 @@ export async function getRefs(repo: string): Promise<GitRef[]> {
   const refs: GitRef[] = []
   for (const line of out.split('\n')) {
     if (!line) continue
-    const [hash, refname, peeled, upstreamRemote] = line.split('\0')
+    const [hash, refname, peeled, upstreamRemote, upstream] = line.split('\0')
     if (refname.startsWith('refs/heads/')) {
       refs.push({
         name: refname.slice('refs/heads/'.length),
         hash,
         type: 'head',
         remote: upstreamRemote || undefined,
+        upstream: upstreamRemote && upstream ? upstream : undefined,
       })
     } else if (refname.startsWith('refs/remotes/')) {
       const name = refname.slice('refs/remotes/'.length)

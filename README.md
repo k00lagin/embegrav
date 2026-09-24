@@ -51,17 +51,31 @@ jsdom; typechecking includes the test files.
 ## Features
 
 - Commit graph with coloured lanes, branch / remote / tag / stash labels, HEAD
-  highlighting and an "Uncommitted Changes" row.
+  highlighting and an "Uncommitted Changes" row. A local branch and its
+  remote-tracking branch share one label (`main ⇄ origin`) while they point at
+  the same commit.
+- Commit table columns can be resized (double-click a divider to reset) and
+  shown or hidden from the header's context menu; the details side panel
+  resets its width on double-click.
 - Repository switcher, branch filter dropdown, "Show Remote Branches" toggle,
   commit ordering (date / author date / topological), "Load More Commits".
 - Find widget (message, author, e-mail, hash, ref names) with match stepping.
 - Commit details panel: metadata, message, parents (clickable), changed files
   rendered with Pierre's file tree, per-file diff viewer (unified / split,
   syntax highlighted, expandable context) powered by Pierre diffs.
-- Compare two commits with Ctrl/Cmd+click.
-- Uncommitted changes panel: staged / unstaged trees, stage / unstage /
-  discard per file or folder, commit (with amend), stash, discard all,
-  conflict resolution helpers.
+- Compare two commits with Ctrl/Cmd+click or Shift+↑/↓.
+- Keyboard: ↑/↓ or j/k move between rows (open details follow the cursor),
+  Enter opens details, Home/End jump to the first/last row, Ctrl/Cmd+H jumps to
+  HEAD, Esc closes details.
+- Uncommitted changes panel: staged / unstaged trees with inline
+  stage / unstage / discard buttons on hover (Space stages or unstages the
+  focused file), commit (amend pre-fills the previous message), a per-repository
+  message draft and history of recent messages, 50/72 length hints, stash,
+  discard all, conflict resolution helpers.
+- Undo for dangerous operations: reset, drop commit, delete branch and discard
+  show a notification with an Undo button (discarded changes are kept as a stash
+  snapshot; resets and drops return to the previous HEAD with `reset --keep`).
+- Drag a local branch label onto a commit or another branch to merge or rebase.
 - Context menus:
   - Commit: create branch, checkout, cherry pick, revert, drop, merge into
     current, rebase current on, reset (soft / mixed / hard), create tag, copy.
@@ -71,8 +85,9 @@ jsdom; typechecking includes the test files.
     merge, rebase, pull into current, fetch, copy.
   - Tag: checkout, push, delete (optionally on the remote), copy.
   - Stash: apply, apply with index, pop, branch from stash, drop, copy.
-- Toolbar: create branch, stash, fetch (with prune), pull, push (with
-  ahead / behind badges), remotes management (add / edit / remove), refresh,
+- Toolbar: create branch, stash, fetch (with prune), one-click pull / push to
+  the upstream (with ahead / behind badges; the arrow next to each opens the
+  options dialog), remotes management (add / edit / remove), refresh,
   settings.
 - Merge / rebase / cherry-pick / revert in progress banner with continue,
   skip and abort.
@@ -102,8 +117,8 @@ colour theme JSON can be imported from _Settings → Theme → Import…_:
 Imported themes are persisted in `localStorage`. Programmatic use:
 
 ```ts
-import { applyTheme, parseThemeJson } from "./src/theme/vscode";
-applyTheme(parseThemeJson(themeJsonText));
+import { applyTheme, parseThemeJson } from './src/theme/vscode'
+applyTheme(parseThemeJson(themeJsonText))
 ```
 
 ## Provenance

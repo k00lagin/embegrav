@@ -14,15 +14,28 @@ import IconLoader from '~icons/lucide/loader-circle'
 
 export type ToastKind = 'info' | 'success' | 'error' | 'progress'
 
+export interface ToastAction {
+  label: string
+  onClick: () => void
+}
+
 export interface Toast {
   id: number
   kind: ToastKind
   title: string
   detail?: string
+  /** A button shown in the toast (e.g. "Undo"); clicking it dismisses the toast */
+  action?: ToastAction
 }
 
 interface ToastApi {
-  show: (kind: ToastKind, title: string, detail?: string, timeoutMs?: number) => number
+  show: (
+    kind: ToastKind,
+    title: string,
+    detail?: string,
+    timeoutMs?: number,
+    action?: ToastAction,
+  ) => number
   update: (id: number, patch: Partial<Omit<Toast, 'id'>>, timeoutMs?: number) => void
   dismiss: (id: number) => void
 }
@@ -62,9 +75,9 @@ export function ToastProvider({ children }: { children: ReactNode }) {
 
   const api = useMemo<ToastApi>(
     () => ({
-      show: (kind, title, detail, timeoutMs) => {
+      show: (kind, title, detail, timeoutMs, action) => {
         const id = ++seq.current
-        setToasts((list) => [...list, { id, kind, title, detail }])
+        setToasts((list) => [...list, { id, kind, title, detail, action }])
         schedule(id, timeoutMs ?? (kind === 'error' ? 12000 : kind === 'progress' ? 0 : 5000))
         return id
       },
@@ -105,6 +118,18 @@ export function ToastProvider({ children }: { children: ReactNode }) {
                 </pre>
               )}
             </div>
+            {t.action && (
+              <button
+                type="button"
+                className="btn btn-secondary !py-0.5 shrink-0"
+                onClick={() => {
+                  dismiss(t.id)
+                  t.action?.onClick()
+                }}
+              >
+                {t.action.label}
+              </button>
+            )}
             <button
               type="button"
               className="icon-btn !w-5 !h-5"

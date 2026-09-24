@@ -1,12 +1,92 @@
 import { rm } from 'node:fs/promises'
 import { join } from 'node:path'
-import { assertSafeArg, git, gitOutput, optionalString } from './git.ts'
-import { getUncommitted } from './repo.ts'
-import type { ActionArgs, ActionName } from '../shared/actions.ts'
+import { assertSafeArg, git, gitOrNull, gitOutput, optionalString } from './git.ts'
+import { getState, getUncommitted } from './repo.ts'
+import type { ActionArgs, ActionName, UndoStep } from '../shared/actions.ts'
 
-type Handlers = { [K in ActionName]: (repo: string, args: ActionArgs[K]) => Promise<string> }
+export interface ActionOutcome {
+  output: string
+  undo?: UndoStep
+}
+
+type Handlers = {
+  [K in ActionName]: (repo: string, args: ActionArgs[K]) => Promise<string | ActionOutcome>
+}
 
 const ref = (v: unknown, label = 'ref') => assertSafeArg(v, label)
+
+// --- undo support -----------------------------------------------------------
+
+async function headHash(repo: string): Promise<string | null> {
+  return (await gitOrNull(repo, ['rev-parse', '--verify', '-q', 'HEAD']))?.trim() || null
+}
+
+async function currentBranch(repo: string): Promise<string | undefined> {
+  return (await gitOrNull(repo, ['symbolic-ref', '-q', '--short', 'HEAD']))?.trim() || undefined
+}
+
+async function operationInProgress(repo: string): Promise<boolean> {
+  const s = await getState(repo, null)
+  return s.mergeInProgress || s.rebaseInProgress || s.cherryPickInProgress || s.revertInProgress
+}
+
+/** Commit the tracked uncommitted changes without touching the working tree (git stash create). */
+async function snapshotTracked(repo: string): Promise<string | undefined> {
+  try {
+    return (await git(repo, ['stash', 'create', 'embegrav: before reset'])).trim() || undefined
+  } catch {
+    return undefined
+  }
+}
+
+/**
+ * Discard changes by stashing them, then drop the stash entry so the graph stays
+ * clean. The stash commit stays in the object database, so it can be reapplied
+ * by hash. Returns null (and changes nothing) when stashing is not possible —
+ * callers then fall back to a plain discard without undo.
+ */
+async function stashAway(
+  repo: string,
+  paths: string[] | null,
+  includeUntracked: boolean,
+): Promise<string | null> {
+  if (!(await headHash(repo)) || (await operationInProgress(repo))) return null
+  const stashRef = async () =>
+    (await gitOrNull(repo, ['rev-parse', '-q', '--verify', 'refs/stash']))?.trim() || null
+  const before = await stashRef()
+  const args = ['stash', 'push', '--quiet', '-m', 'embegrav: discarded changes']
+  if (includeUntracked) args.push('--include-untracked')
+  try {
+    await git(repo, paths ? ['--literal-pathspecs', ...args, '--', ...paths] : args)
+  } catch {
+    return null
+  }
+  const after = await stashRef()
+  if (!after || after === before) return null
+  await git(repo, ['stash', 'drop', '--quiet'])
+  return after
+}
+
+function discardOutcome(snapshot: string): ActionOutcome {
+  return {
+    output: `Snapshot ${snapshot.slice(0, 8)} (restore manually with: git stash apply ${snapshot.slice(0, 8)})`,
+    undo: {
+      label: 'Restore discarded changes',
+      action: 'stashApply',
+      args: { selector: snapshot, reinstateIndex: true },
+    },
+  }
+}
+
+async function applySnapshot(repo: string, snapshot: string): Promise<string> {
+  const hash = ref(snapshot, 'snapshot')
+  try {
+    return await gitOutput(repo, ['stash', 'apply', '--index', hash])
+  } catch {
+    // The index part may no longer apply cleanly; restore the changes unstaged.
+    return gitOutput(repo, ['stash', 'apply', hash])
+  }
+}
 
 const actions: Handlers = {
   // --- remote -------------------------------------------------------------
@@ -98,7 +178,41 @@ const actions: Handlers = {
     return gitOutput(repo, ['branch', name, hash])
   },
   async deleteBranch(repo, a) {
-    return gitOutput(repo, ['branch', a.force ? '-D' : '-d', ref(a.name, 'branch')])
+    const name = ref(a.name, 'branch')
+    const [hash, upstream] = (
+      await git(repo, [
+        'for-each-ref',
+        '--format=%(objectname)%00%(upstream:short)',
+        `refs/heads/${name}`,
+      ])
+    )
+      .trim()
+      .split('\0')
+    const output = await gitOutput(repo, ['branch', a.force ? '-D' : '-d', name])
+    if (!hash) return output
+    return {
+      output,
+      undo: {
+        label: `Restore branch ${name}`,
+        action: 'restoreBranch',
+        args: upstream ? { name, hash, upstream } : { name, hash },
+      },
+    }
+  },
+  async restoreBranch(repo, a) {
+    const name = ref(a.name, 'branch')
+    const out = [await gitOutput(repo, ['branch', name, ref(a.hash, 'commit')])]
+    const upstream = optionalString(a.upstream)
+    if (upstream) {
+      try {
+        out.push(
+          await gitOutput(repo, ['branch', `--set-upstream-to=${ref(upstream, 'upstream')}`, name]),
+        )
+      } catch (e) {
+        out.push(`Upstream ${upstream} was not restored: ${(e as Error).message}`)
+      }
+    }
+    return out.filter(Boolean).join('\n')
   },
   async renameBranch(repo, a) {
     return gitOutput(repo, ['branch', '-m', ref(a.name, 'branch'), ref(a.newName, 'new name')])
@@ -118,6 +232,8 @@ const actions: Handlers = {
     if (a.preserveMerges) args.push('--rebase-merges')
     if (a.ignoreDate) args.push('--ignore-date')
     args.push(ref(a.ref))
+    const branch = optionalString(a.branch)
+    if (branch) args.push(ref(branch, 'branch'))
     return gitOutput(repo, args)
   },
   async cherryPick(repo, a) {
@@ -138,11 +254,49 @@ const actions: Handlers = {
   },
   async reset(repo, a) {
     const mode = a.mode
-    return gitOutput(repo, ['reset', `--${mode}`, ref(a.hash, 'commit')])
+    const hash = ref(a.hash, 'commit')
+    const [before, branch] = await Promise.all([headHash(repo), currentBranch(repo)])
+    const snapshot = mode === 'hard' ? await snapshotTracked(repo) : undefined
+    const output = await gitOutput(repo, ['reset', `--${mode}`, hash])
+    if (!before) return output
+    return {
+      output,
+      undo: {
+        label: `Undo reset to ${hash.slice(0, 8)}`,
+        action: 'restoreHead',
+        // After a hard reset the tracked files are clean, so --keep moves back
+        // safely and still refuses to clobber anything edited in the meantime.
+        args: { hash: before, mode: mode === 'hard' ? 'keep' : mode, branch, snapshot },
+      },
+    }
+  },
+  async restoreHead(repo, a) {
+    const expected = optionalString(a.branch)
+    const branch = await currentBranch(repo)
+    if (expected !== branch)
+      throw new Error(
+        expected
+          ? `Cannot undo: ${expected} is no longer the checked out branch`
+          : 'Cannot undo: HEAD is no longer detached',
+      )
+    const out = [await gitOutput(repo, ['reset', `--${a.mode}`, ref(a.hash, 'commit')])]
+    const snapshot = optionalString(a.snapshot)
+    if (snapshot) out.push(await applySnapshot(repo, snapshot))
+    return out.filter(Boolean).join('\n')
   },
   async dropCommit(repo, a) {
     const hash = ref(a.hash, 'commit')
-    return gitOutput(repo, ['rebase', '--onto', `${hash}^`, hash])
+    const [before, branch] = await Promise.all([headHash(repo), currentBranch(repo)])
+    const output = await gitOutput(repo, ['rebase', '--onto', `${hash}^`, hash])
+    if (!before) return output
+    return {
+      output,
+      undo: {
+        label: `Restore commit ${hash.slice(0, 8)}`,
+        action: 'restoreHead',
+        args: { hash: before, mode: 'keep', branch },
+      },
+    }
   },
   async abort(repo, a) {
     const op = a.op
@@ -215,6 +369,8 @@ const actions: Handlers = {
   },
   async discard(repo, a) {
     const paths = a.paths
+    const snapshot = await stashAway(repo, paths, true)
+    if (snapshot) return discardOutcome(snapshot)
     const out: string[] = []
     // Untracked files: remove from disk. Tracked: restore from HEAD (or drop from index if new).
     const entries = await getUncommitted(repo, paths)
@@ -248,6 +404,9 @@ const actions: Handlers = {
     return out.filter(Boolean).join('\n')
   },
   async discardAll(repo, a) {
+    // Same effect as reset --hard (and clean -fd), but recoverable.
+    const snapshot = await stashAway(repo, null, !!a.includeUntracked)
+    if (snapshot) return discardOutcome(snapshot)
     const out = [await gitOutput(repo, ['reset', '--hard'])]
     if (a.includeUntracked) out.push(await gitOutput(repo, ['clean', '-fd']))
     return out.join('\n')
@@ -296,6 +455,7 @@ export async function runAction<K extends ActionName>(
   repo: string,
   action: K,
   args: ActionArgs[K],
-): Promise<string> {
-  return actions[action](repo, args)
+): Promise<ActionOutcome> {
+  const result = await actions[action](repo, args)
+  return typeof result === 'string' ? { output: result } : result
 }

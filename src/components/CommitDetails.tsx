@@ -8,11 +8,13 @@ import type {
 } from '@shared/types'
 import { api } from '@/api'
 import { formatFullDate, shortHash } from '@/lib/format'
+import { loadLocal, saveLocal } from '@/lib/settings'
 import type { RepoActions } from '@/hooks/useRepoActions'
-import { ChangedFilesTree } from './ChangedFilesTree'
+import { ChangedFilesTree, type RowAction } from './ChangedFilesTree'
 import type { DiffTarget } from './DiffViewer'
 import type { MenuEntry } from './ContextMenu'
 import { useDialog } from './Dialog'
+import { Dropdown, DropdownItem } from './Dropdown'
 import IconX from '~icons/lucide/x'
 import IconCopy from '~icons/lucide/copy'
 import IconPlus from '~icons/lucide/plus'
@@ -22,6 +24,8 @@ import IconArchive from '~icons/lucide/archive'
 import IconFileDiff from '~icons/lucide/file-diff'
 import IconLoader from '~icons/lucide/loader-circle'
 import IconGitCommit from '~icons/lucide/git-commit-horizontal'
+import IconUndo2 from '~icons/lucide/undo-2'
+import IconHistory from '~icons/lucide/history'
 
 export type DetailsMode =
   | { kind: 'commit'; hash: string }
@@ -345,8 +349,15 @@ function UncommittedView({
   const cls = layoutClasses(layout)
   const treeRows = layout === 'column' ? 20 : 10
   const dialog = useDialog()
-  const [message, setMessage] = useState('')
-  const [amend, setAmend] = useState(false)
+  const draftKey = `commitDraft:${repo}`
+  const historyKey = `commitHistory:${repo}`
+  const [message, setMessage] = useState(() => loadLocal(draftKey, '', isString))
+  const [history, setHistory] = useState(() => loadLocal(historyKey, [], isStringList))
+  const [amend, setAmendState] = useState(false)
+  const amendRef = useRef(false)
+  // The message typed before Amend replaced it with the previous commit's message
+  const draftBeforeAmend = useRef('')
+  const prefilled = useRef<string | null>(null)
   const [committing, setCommitting] = useState(false)
   const commitInFlight = useRef(false)
   const d = state.data
@@ -355,6 +366,36 @@ function UncommittedView({
     data.state.rebaseInProgress ||
     data.state.cherryPickInProgress ||
     data.state.revertInProgress
+
+  // The draft survives reloads and repository switches; amend text is not a draft.
+  useEffect(() => {
+    if (!amend) saveLocal(draftKey, message)
+  }, [draftKey, message, amend])
+
+  const setAmend = async (on: boolean) => {
+    amendRef.current = on
+    setAmendState(on)
+    if (!on) {
+      if (prefilled.current !== null && message === prefilled.current)
+        setMessage(draftBeforeAmend.current)
+      prefilled.current = null
+      return
+    }
+    draftBeforeAmend.current = message
+    if (!data.head) return
+    try {
+      const last = await api.commit(repo, data.head)
+      const text = last.body ? `${last.subject}\n\n${last.body}` : last.subject
+      // Leave the text alone if the user started typing or unchecked Amend meanwhile.
+      setMessage((m) => {
+        if (!amendRef.current || m !== draftBeforeAmend.current) return m
+        prefilled.current = text
+        return text
+      })
+    } catch {
+      // Without the previous message the placeholder still explains that it is kept.
+    }
+  }
 
   const canCommit =
     state.current &&
@@ -374,7 +415,20 @@ function UncommittedView({
         { message, amend },
         { successMessage: amend ? 'Commit amended' : 'Committed' },
       )
-      if (ok) setMessage('')
+      if (ok) {
+        const text = message.trim()
+        if (text) {
+          const next = [text, ...history.filter((h) => h !== text)].slice(0, 20)
+          setHistory(next)
+          saveLocal(historyKey, next)
+        }
+        if (amend) {
+          amendRef.current = false
+          setAmendState(false)
+          prefilled.current = null
+          setMessage(draftBeforeAmend.current)
+        } else setMessage('')
+      }
     } finally {
       commitInFlight.current = false
       setCommitting(false)
@@ -406,8 +460,7 @@ function UncommittedView({
     {
       label: isDir ? 'Unstage Folder' : 'Unstage',
       icon: <IconMinus />,
-      onClick: () =>
-        void actions.run(`Unstage ${path}`, 'unstage', { paths: [path] }, { silent: true }),
+      onClick: () => unstage(path),
     },
     {
       label: isDir ? 'Discard Folder Changes…' : 'Discard Changes…',
@@ -432,8 +485,7 @@ function UncommittedView({
     {
       label: isDir ? 'Stage Folder' : 'Stage',
       icon: <IconPlus />,
-      onClick: () =>
-        void actions.run(`Stage ${path}`, 'stage', { paths: [path] }, { silent: true }),
+      onClick: () => stage(path),
     },
     ...(file?.status === 'U'
       ? [
@@ -469,10 +521,38 @@ function UncommittedView({
     { label: 'Copy Path', icon: <IconCopy />, onClick: () => void actions.copy(path, 'Path') },
   ]
 
+  const stage = (path: string) =>
+    void actions.run(`Stage ${path}`, 'stage', { paths: [path] }, { silent: true })
+  const unstage = (path: string) =>
+    void actions.run(`Unstage ${path}`, 'unstage', { paths: [path] }, { silent: true })
+  const discardAction = (path: string, isDir: boolean, untracked: boolean): RowAction => ({
+    label: isDir ? 'Discard Folder Changes…' : untracked ? 'Delete File…' : 'Discard Changes…',
+    icon: <IconUndo2 className="w-3.5 h-3.5" />,
+    onClick: () => void discard(path),
+  })
+  const stagedActions = (_: ChangedFile | undefined, path: string, isDir: boolean) => [
+    discardAction(path, isDir, false),
+    {
+      label: isDir ? 'Unstage Folder' : 'Unstage',
+      icon: <IconMinus className="w-3.5 h-3.5" />,
+      primary: true,
+      onClick: () => unstage(path),
+    },
+  ]
+  const unstagedActions = (file: ChangedFile | undefined, path: string, isDir: boolean) => [
+    discardAction(path, isDir, file?.status === '?'),
+    {
+      label: isDir ? 'Stage Folder' : 'Stage',
+      icon: <IconPlus className="w-3.5 h-3.5" />,
+      primary: true,
+      onClick: () => stage(path),
+    },
+  ]
+
   const discard = async (path: string) => {
     const ok = await dialog.confirm(
       `Discard changes to "${path}"?`,
-      'The changes will be permanently lost.',
+      'The changes are stashed away first, so Undo can restore them (not while a merge, rebase, cherry-pick or revert is in progress).',
       {
         submitLabel: 'Discard',
         danger: true,
@@ -490,6 +570,33 @@ function UncommittedView({
         <div className="font-semibold flex items-center gap-2">
           <IconGitCommit className="w-4 h-4" /> Commit to{' '}
           {data.currentBranch ?? <span className="text-warning">detached HEAD</span>}
+          <span className="flex-1" />
+          {history.length > 0 && (
+            <Dropdown
+              icon={<IconHistory className="w-3.5 h-3.5" />}
+              label=""
+              title="Recent commit messages"
+              align="right"
+            >
+              {(close) => (
+                <div className="py-1 w-[320px] font-normal">
+                  {history.map((h) => (
+                    <DropdownItem
+                      key={h}
+                      onClick={() => {
+                        close()
+                        setMessage(h)
+                      }}
+                    >
+                      <span className="truncate" title={h}>
+                        {h.split('\n')[0]}
+                      </span>
+                    </DropdownItem>
+                  ))}
+                </div>
+              )}
+            </Dropdown>
+          )}
         </div>
         {busy && (
           <div className="text-warning text-xs">
@@ -513,6 +620,7 @@ function UncommittedView({
             }
           }}
         />
+        <MessageHints message={message} />
         <div className="flex items-center gap-3 flex-wrap">
           <button type="button" className="btn" disabled={!canCommit} onClick={() => void commit()}>
             {committing ? (
@@ -527,7 +635,7 @@ function UncommittedView({
             <input
               type="checkbox"
               checked={amend}
-              onChange={(e) => setAmend(e.target.checked)}
+              onChange={(e) => void setAmend(e.target.checked)}
               disabled={!data.head}
             />{' '}
             Amend last commit
@@ -546,13 +654,15 @@ function UncommittedView({
             type="button"
             className="btn btn-secondary"
             onClick={() => void actions.discardAll()}
+            disabled={d.staged.length + d.unstaged.length === 0}
           >
             <IconEraser className="w-3.5 h-3.5" /> Discard All…
           </button>
         </div>
         {d.staged.length === 0 && d.unstaged.length > 0 && (
           <div className="text-fg-dim text-xs">
-            Stage files (right-click → Stage, or "Stage All") before committing.
+            Stage files before committing: hover a file and click +, press Space on it, or use
+            "Stage all".
           </div>
         )}
       </div>
@@ -578,6 +688,7 @@ function UncommittedView({
             maxRows={treeRows}
             onOpenFile={openStaged}
             menuFor={stagedMenu}
+            rowActions={stagedActions}
           />
         </div>
         <div className="section-header">
@@ -601,9 +712,38 @@ function UncommittedView({
             maxRows={treeRows}
             onOpenFile={openUnstaged}
             menuFor={unstagedMenu}
+            rowActions={unstagedActions}
           />
         </div>
       </div>
+    </div>
+  )
+}
+
+const isString = (value: unknown): value is string => typeof value === 'string'
+const isStringList = (value: unknown): value is string[] =>
+  Array.isArray(value) && value.every(isString)
+
+/** Conventional limits: subject within 50 characters (72 at most), body wrapped at 72. */
+function MessageHints({ message }: { message: string }) {
+  if (!message.trim()) return null
+  const lines = message.split('\n')
+  const subject = lines[0].length
+  const longLine = lines.findIndex((l, i) => i > 0 && l.length > 72)
+  return (
+    <div className="flex items-center gap-3 text-xs -mt-1">
+      <span
+        className={subject > 72 ? 'text-danger' : subject > 50 ? 'text-warning' : 'text-fg-dim'}
+        title="Keep the subject line within 50 characters (72 at most)"
+      >
+        Subject {subject}/50
+      </span>
+      {lines.length > 1 && lines[1].trim() !== '' && (
+        <span className="text-warning">Add a blank line after the subject</span>
+      )}
+      {longLine > 0 && (
+        <span className="text-warning">Line {longLine + 1} is longer than 72 characters</span>
+      )}
     </div>
   )
 }

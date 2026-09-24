@@ -1,5 +1,5 @@
 import { useMemo } from 'react'
-import type { ActionArgs, ActionName } from '@shared/actions'
+import type { ActionArgs, ActionName, UndoStep } from '@shared/actions'
 import { checkedValue, choiceValue, optionalTextValue, textValue } from '@/components/dialogValues'
 import type { GitCommit, GitRef, GraphData, StashInfo } from '@shared/types'
 import { api } from '@/api'
@@ -48,14 +48,26 @@ export interface RepoActions {
   refMenu: (target: LabelTarget, commit: GitCommit) => MenuEntry[]
   stashMenu: (stash: StashInfo) => MenuEntry[]
   uncommittedMenu: () => MenuEntry[]
+  /** Menu shown after dropping a branch label on a commit or another branch */
+  branchDropMenu: (source: string, target: DropTarget) => MenuEntry[]
   fetchAll: () => Promise<boolean>
+  /** Pull from the configured upstream right away (asks for options when there is none) */
   pull: () => Promise<boolean>
+  pullWithOptions: () => Promise<boolean>
+  /** Push to the configured upstream right away (asks for options when there is none) */
   push: () => Promise<boolean>
+  pushWithOptions: () => Promise<boolean>
   stash: () => Promise<boolean>
   discardAll: () => Promise<boolean>
   createBranchAt: (hash: string) => Promise<boolean>
   editUser: () => Promise<void>
   copy: (text: string, what: string) => Promise<void>
+}
+
+export interface DropTarget {
+  hash: string
+  /** Local branch whose label received the drop */
+  branch?: string
 }
 
 // oxlint-disable-next-line no-control-regex -- git forbids control characters in ref names
@@ -82,7 +94,19 @@ export function useRepoActions(
       const id = toast.show('progress', `${title}…`)
       try {
         const r = await api.action(repo, action, args)
-        if (opts.silent) toast.dismiss(id)
+        const undo = r.undo
+        if (undo)
+          toast.update(
+            id,
+            {
+              kind: 'success',
+              title: opts.successMessage ?? title,
+              detail: r.output || undefined,
+              action: { label: 'Undo', onClick: () => void runStep(undo) },
+            },
+            10000,
+          )
+        else if (opts.silent) toast.dismiss(id)
         else
           toast.update(
             id,
@@ -97,6 +121,13 @@ export function useRepoActions(
         return false
       }
     }
+
+    const runStep = (step: UndoStep) =>
+      (run as (title: string, action: ActionName, args: unknown) => Promise<boolean>)(
+        step.label,
+        step.action,
+        step.args,
+      )
 
     const copy = async (text: string, what: string) => {
       try {
@@ -213,9 +244,9 @@ export function useRepoActions(
       return ok
     }
 
-    const mergeInto = async (ref: string) => {
+    const mergeInto = async (ref: string, into = current) => {
       const v = await dialog.open({
-        title: `Merge into ${current ?? 'current branch'}`,
+        title: `Merge into ${into ?? 'current branch'}`,
         description: `Merge "${ref}" into the current branch.`,
         fields: [
           {
@@ -243,10 +274,13 @@ export function useRepoActions(
       })
     }
 
-    const rebaseOnto = async (ref: string) => {
+    /** Rebase the current branch (or `branch`, which git checks out first) on `ref`. */
+    const rebaseOnto = async (ref: string, branch?: string) => {
       const v = await dialog.open({
-        title: `Rebase ${current ?? 'current branch'}`,
-        description: `Rebase the current branch on "${ref}".`,
+        title: `Rebase ${branch ?? current ?? 'current branch'}`,
+        description: branch
+          ? `Check out "${branch}" and rebase it on "${ref}".`
+          : `Rebase the current branch on "${ref}".`,
         fields: [
           {
             type: 'checkbox',
@@ -258,8 +292,9 @@ export function useRepoActions(
         submitLabel: 'Rebase',
       })
       if (!v) return false
-      return run(`Rebase on ${ref}`, 'rebase', {
+      return run(`Rebase ${branch ? `${branch} ` : ''}on ${ref}`, 'rebase', {
         ref,
+        ...(branch ? { branch } : {}),
         preserveMerges: checkedValue(v, 'preserveMerges'),
       })
     }
@@ -330,6 +365,17 @@ export function useRepoActions(
     }
 
     const pull = async () => {
+      if (remotes.length === 0) {
+        toast.show('error', 'No remotes configured')
+        return false
+      }
+      const up = data?.upstream?.name
+      // `git pull` without arguments uses the upstream and the user's pull.rebase config.
+      if (up && current) return run(`Pull ${up}`, 'pull', {})
+      return pullWithOptions()
+    }
+
+    const pullWithOptions = async () => {
       if (remotes.length === 0) {
         toast.show('error', 'No remotes configured')
         return false
@@ -660,7 +706,7 @@ export function useRepoActions(
                 label: 'Pull…',
                 icon: <IconDownload />,
                 disabled: remotes.length === 0 || busy,
-                onClick: () => void pull(),
+                onClick: () => void pullWithOptions(),
               },
             ]
           : []),
@@ -708,6 +754,24 @@ export function useRepoActions(
       return items
     }
 
+    const deleteRemoteBranchItem = (ref: GitRef): MenuEntry => {
+      const remote = ref.remote ?? ref.name.split('/')[0]
+      const branch = ref.name.slice(remote.length + 1)
+      return {
+        label: 'Delete Remote Branch…',
+        icon: <IconTrash2 />,
+        danger: true,
+        onClick: async () => {
+          const ok = await dialog.confirm(
+            `Delete ${ref.name}?`,
+            `The branch "${branch}" will be deleted on remote "${remote}".`,
+            { submitLabel: 'Delete', danger: true },
+          )
+          if (ok) await run(`Delete ${ref.name}`, 'deleteRemoteBranch', { remote, name: branch })
+        },
+      }
+    }
+
     const remoteBranchMenu = (ref: GitRef, commit: GitCommit): MenuEntry[] => {
       const remote = ref.remote ?? ref.name.split('/')[0]
       const branch = ref.name.slice(remote.length + 1)
@@ -737,19 +801,7 @@ export function useRepoActions(
               })
           },
         },
-        {
-          label: 'Delete Remote Branch…',
-          icon: <IconTrash2 />,
-          danger: true,
-          onClick: async () => {
-            const ok = await dialog.confirm(
-              `Delete ${ref.name}?`,
-              `The branch "${branch}" will be deleted on remote "${remote}".`,
-              { submitLabel: 'Delete', danger: true },
-            )
-            if (ok) await run(`Delete ${ref.name}`, 'deleteRemoteBranch', { remote, name: branch })
-          },
-        },
+        deleteRemoteBranchItem(ref),
         'separator',
         ...(current
           ? [
@@ -955,7 +1007,7 @@ export function useRepoActions(
       const v = await dialog.open({
         title: 'Discard all changes?',
         description:
-          'All staged and unstaged changes to tracked files will be permanently lost (git reset --hard).',
+          'All staged and unstaged changes to tracked files will be discarded. A snapshot is kept so the notification can undo this (except while a merge, rebase, cherry-pick or revert is in progress).',
         fields: [
           {
             type: 'checkbox',
@@ -998,6 +1050,27 @@ export function useRepoActions(
       if (target.kind === 'stash') return stashMenu(target.stash)
       if (target.kind === 'head') return commitMenu(commit)
       const ref = target.ref
+      const synced = target.synced
+      if (ref.type === 'head' && synced) {
+        // One label stands for both the local branch and its identical remote-tracking branch.
+        const remote = synced.remote ?? synced.name.split('/')[0]
+        return [
+          ...localBranchMenu(ref, commit),
+          'separator',
+          deleteRemoteBranchItem(synced),
+          {
+            label: `Fetch ${remote}`,
+            icon: <IconCloudDownload />,
+            onClick: () =>
+              void run(`Fetch ${remote}`, 'fetch', { remote, prune: settings.fetchAndPrune }),
+          },
+          {
+            label: 'Copy Remote Branch Name',
+            icon: <IconCopy />,
+            onClick: () => void copy(synced.name, 'Branch name'),
+          },
+        ]
+      }
       if (ref.type === 'head') return localBranchMenu(ref, commit)
       if (ref.type === 'remote') return remoteBranchMenu(ref, commit)
       return tagMenu(ref, commit)
@@ -1008,7 +1081,78 @@ export function useRepoActions(
         toast.show('error', 'Not on a branch', 'Check out a branch before pushing.')
         return false
       }
+      const up = data?.upstream?.name
+      const remote = data?.refs.find((r) => r.type === 'head' && r.name === current)?.remote
+      if (!up || !remote || !up.startsWith(`${remote}/`) || remotes.length === 0)
+        return pushBranch(current)
+      const target = up.slice(remote.length + 1)
+      return run(`Push ${current} to ${up}`, 'push', {
+        remote,
+        branch: target === current ? current : `${current}:${target}`,
+      })
+    }
+
+    const pushWithOptions = async () => {
+      if (!current) {
+        toast.show('error', 'Not on a branch', 'Check out a branch before pushing.')
+        return false
+      }
       return pushBranch(current)
+    }
+
+    const branchDropMenu: RepoActions['branchDropMenu'] = (source, target) => {
+      const sourceHash = data?.refs.find((r) => r.type === 'head' && r.name === source)?.hash
+      if (target.branch === source || (!target.branch && target.hash === sourceHash)) return []
+      const targetRef = target.branch ?? target.hash
+      const targetName = target.branch ?? shortHash(target.hash)
+      const ontoCurrent =
+        !!current && (target.branch === current || (!target.branch && target.hash === data?.head))
+      if (ontoCurrent)
+        return [
+          {
+            label: `Merge ${source} into ${current}…`,
+            icon: <IconGitMerge />,
+            disabled: busy,
+            onClick: () => void mergeInto(source),
+          },
+          {
+            label: `Rebase ${current} on ${source}…`,
+            icon: <IconGitPullRequest />,
+            disabled: busy,
+            onClick: () => void rebaseOnto(source),
+          },
+        ]
+      const rebaseItem: MenuEntry = {
+        label: `Rebase ${source} on ${targetName}…`,
+        icon: <IconGitPullRequest />,
+        disabled: busy,
+        onClick: () =>
+          void (source === current ? rebaseOnto(targetRef) : rebaseOnto(targetRef, source)),
+      }
+      const into = target.branch
+      if (!into) return [rebaseItem]
+      if (source === current)
+        return [
+          {
+            label: `Merge ${into} into ${source}…`,
+            icon: <IconGitMerge />,
+            disabled: busy,
+            onClick: () => void mergeInto(into),
+          },
+          rebaseItem,
+        ]
+      return [
+        {
+          label: `Checkout ${into} and merge ${source}…`,
+          icon: <IconGitMerge />,
+          disabled: busy,
+          onClick: async () => {
+            if (await run(`Checkout ${into}`, 'checkoutBranch', { name: into }))
+              await mergeInto(source, into)
+          },
+        },
+        rebaseItem,
+      ]
     }
 
     return {
@@ -1017,9 +1161,12 @@ export function useRepoActions(
       refMenu,
       stashMenu,
       uncommittedMenu,
+      branchDropMenu,
       fetchAll,
       pull,
+      pullWithOptions,
       push,
+      pushWithOptions,
       stash,
       discardAll,
       createBranchAt,

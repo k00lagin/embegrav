@@ -74,8 +74,10 @@ function Harness({ graph = data }: { graph?: GraphData }) {
             {item.label}
           </button>
         ))}
-      <button onClick={() => void actions.pull()}>Open pull</button>
-      <button onClick={() => void actions.push()}>Open push</button>
+      <button onClick={() => void actions.pullWithOptions()}>Open pull</button>
+      <button onClick={() => void actions.pushWithOptions()}>Open push</button>
+      <button onClick={() => void actions.pull()}>Quick pull</button>
+      <button onClick={() => void actions.push()}>Quick push</button>
       <button onClick={() => void actions.discardAll()}>Direct discard</button>
       {menu
         .filter((item) => item !== 'separator')
@@ -170,6 +172,33 @@ it.each([true, false])(
     fireEvent.click(screen.getByRole('button', { name: 'Cancel' }))
   },
 )
+
+it('pulls and pushes the configured upstream in one click, asking only without one', async () => {
+  setup({
+    ...data,
+    refs: [{ type: 'head', name: 'main', hash: commit.hash, remote: 'upstream' }],
+    upstream: { name: 'upstream/release/main', ahead: 1, behind: 1 },
+  })
+  fireEvent.click(screen.getByRole('button', { name: 'Quick pull' }))
+  await waitFor(() => expect(api.action).toHaveBeenCalledWith('/disposable/repo', 'pull', {}))
+  fireEvent.click(screen.getByRole('button', { name: 'Quick push' }))
+  await waitFor(() =>
+    expect(api.action).toHaveBeenCalledWith('/disposable/repo', 'push', {
+      remote: 'upstream',
+      branch: 'main:release/main',
+    }),
+  )
+  expect(screen.queryByLabelText('Remote')).toBeNull()
+  cleanup()
+  vi.mocked(api.action).mockClear()
+  setup({ ...data, refs: [{ type: 'head', name: 'main', hash: commit.hash }], upstream: null })
+  fireEvent.click(screen.getByRole('button', { name: 'Quick push' }))
+  expect((screen.getByLabelText('Set upstream (-u)') as HTMLInputElement).checked).toBe(true)
+  fireEvent.click(screen.getByRole('button', { name: 'Cancel' }))
+  fireEvent.click(screen.getByRole('button', { name: 'Quick pull' }))
+  expect(screen.getByLabelText('Remote branch')).toBeTruthy()
+  expect(api.action).not.toHaveBeenCalled()
+})
 
 it.each(['Direct discard', 'Discard All Changes…'])(
   'keeps confirmation and untracked opt-in for %s',

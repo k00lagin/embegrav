@@ -149,8 +149,8 @@ api.post('/file-content', async (c) => {
 api.post('/action', async (c) => {
   const body = decodeActionRequest(await c.req.json())
   const repo = getRepo(body.repo)
-  const output = await runAction(repo.path, body.action, body.args)
-  return c.json({ ok: true, output })
+  const { output, undo } = await runAction(repo.path, body.action, body.args)
+  return c.json({ ok: true, output, undo })
 })
 
 api.get('/events', async (c) => {

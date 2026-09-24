@@ -1,4 +1,4 @@
-import { useEffect, useMemo, useRef } from 'react'
+import { useEffect, useMemo, useRef, useState, type ReactNode } from 'react'
 import { FileTree, useFileTree } from '@pierre/trees/react'
 import { themeToTreeStyles } from '@pierre/trees'
 import type { GitStatusEntry, ContextMenuItem, ContextMenuOpenContext } from '@pierre/trees'
@@ -6,11 +6,22 @@ import type { ChangedFile } from '@shared/types'
 import { useTheme } from '@/theme/ThemeProvider'
 import type { MenuEntry } from './ContextMenu'
 
+/** A button shown on the hovered row (like VS Code's inline stage / unstage / discard). */
+export interface RowAction {
+  label: string
+  icon: ReactNode
+  onClick: () => void
+  /** Also triggered by Space on the keyboard-focused row */
+  primary?: boolean
+}
+
 interface Props {
   files: ChangedFile[]
   onOpenFile: (file: ChangedFile) => void
   /** Optional context menu entries for a file (or directory: file is undefined) */
   menuFor?: (file: ChangedFile | undefined, path: string, isDirectory: boolean) => MenuEntry[]
+  /** Optional inline actions for a file (or directory: file is undefined) */
+  rowActions?: (file: ChangedFile | undefined, path: string, isDirectory: boolean) => RowAction[]
   emptyText?: string
   maxRows?: number
 }
@@ -38,9 +49,12 @@ export function ChangedFilesTree({
   files,
   onOpenFile,
   menuFor,
+  rowActions,
   emptyText = 'No changes',
   maxRows = 16,
 }: Props) {
+  const wrapRef = useRef<HTMLDivElement>(null)
+  const [hover, setHover] = useState<HoveredRow | null>(null)
   const paths = useMemo(() => files.map((f) => f.path), [files])
   const byPath = useMemo(() => new Map(files.map((f) => [f.path, f])), [files])
   const gitStatus = useMemo<GitStatusEntry[]>(
@@ -133,30 +147,119 @@ export function ChangedFilesTree({
     return <div className="text-fg-dim px-2 py-1">{emptyText}</div>
   }
 
+  const actionsFor = (path: string, isDir: boolean) =>
+    rowActions?.(isDir ? undefined : byPath.get(path), path, isDir) ?? []
+  const hovered = hover && (isDir(hover) || byPath.has(hover.path)) ? hover : null
+
+  // Rows live in Pierre's shadow DOM, so the actions are an overlay positioned
+  // over the hovered row rather than part of the row itself.
+  const trackHover = (e: React.MouseEvent) => {
+    if (!rowActions || !wrapRef.current) return
+    if ((e.target as HTMLElement).closest?.('.tree-row-actions')) return
+    const row = e.nativeEvent
+      .composedPath()
+      .find(
+        (el): el is HTMLElement =>
+          el instanceof HTMLElement && el.dataset.type === 'item' && !!el.dataset.itemPath,
+      )
+    if (!row) {
+      setHover(null)
+      return
+    }
+    const box = wrapRef.current.getBoundingClientRect()
+    const r = row.getBoundingClientRect()
+    const next: HoveredRow = {
+      path: row.dataset.itemPath!,
+      kind: row.dataset.itemType === 'folder' ? 'directory' : 'file',
+      top: r.top - box.top,
+      height: r.height,
+      selected: row.hasAttribute('data-item-selected'),
+    }
+    setHover((h) =>
+      h &&
+      h.path === next.path &&
+      h.top === next.top &&
+      h.height === next.height &&
+      h.selected === next.selected
+        ? h
+        : next,
+    )
+  }
+
   return (
-    <FileTree
-      model={model}
-      className="changed-files-tree"
-      style={{ ...treeStyles, height: rows * ROW_HEIGHT + 8 }}
-      renderContextMenu={
-        menuFor
-          ? (item: ContextMenuItem, ctx: ContextMenuOpenContext) => (
-              <TreeMenu
-                entries={
-                  menuRef.current?.(
-                    filesRef.current.get(item.path),
-                    item.path,
-                    item.kind === 'directory',
-                  ) ?? []
-                }
-                close={ctx.close}
-              />
-            )
-          : undefined
-      }
-    />
+    <div
+      ref={wrapRef}
+      className="relative"
+      onMouseMove={trackHover}
+      onMouseLeave={() => setHover(null)}
+      onWheel={() => setHover(null)}
+      onKeyDown={(e) => {
+        if (!rowActions || e.key !== ' ' || e.ctrlKey || e.metaKey || e.altKey || e.shiftKey) return
+        const path = model.getFocusedPath()
+        if (!path) return
+        const action = actionsFor(path, !!model.getItem(path)?.isDirectory()).find((a) => a.primary)
+        if (!action) return
+        e.preventDefault()
+        action.onClick()
+      }}
+    >
+      <FileTree
+        model={model}
+        className="changed-files-tree"
+        style={{ ...treeStyles, height: rows * ROW_HEIGHT + 8 }}
+        renderContextMenu={
+          menuFor
+            ? (item: ContextMenuItem, ctx: ContextMenuOpenContext) => (
+                <TreeMenu
+                  entries={
+                    menuRef.current?.(
+                      filesRef.current.get(item.path),
+                      item.path,
+                      item.kind === 'directory',
+                    ) ?? []
+                  }
+                  close={ctx.close}
+                />
+              )
+            : undefined
+        }
+      />
+      {hovered && (
+        <div
+          className={`tree-row-actions${hovered.selected ? ' selected' : ''}`}
+          style={{ top: hovered.top, height: hovered.height }}
+        >
+          {actionsFor(hovered.path, isDir(hovered)).map((a) => (
+            <button
+              key={a.label}
+              type="button"
+              className="icon-btn !w-5 !h-5"
+              title={a.primary ? `${a.label} (Space)` : a.label}
+              aria-label={`${a.label} ${hovered.path}`}
+              onClick={(e) => {
+                e.stopPropagation()
+                a.onClick()
+              }}
+            >
+              {a.icon}
+            </button>
+          ))}
+        </div>
+      )}
+    </div>
   )
 }
+
+interface HoveredRow {
+  path: string
+  kind: 'file' | 'directory'
+  /** Position relative to the tree wrapper */
+  top: number
+  height: number
+  selected: boolean
+}
+
+const isDir = (row: HoveredRow) => row.kind === 'directory'
 
 function TreeMenu({
   entries,

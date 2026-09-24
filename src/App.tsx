@@ -1,9 +1,18 @@
-import { useCallback, useEffect, useMemo, useRef, useState, type MouseEvent } from 'react'
+import {
+  useCallback,
+  useEffect,
+  useMemo,
+  useRef,
+  useState,
+  type KeyboardEvent as ReactKeyboardEvent,
+  type MouseEvent,
+} from 'react'
 import type { GitCommit, GraphRequest, RepoInfo } from '@shared/types'
 import { api, subscribeRepoEvents } from './api'
 import { layoutGraph } from './graph/layout'
 import { UNCOMMITTED, pluralize, shortHash } from './lib/format'
 import { loadLocal, saveLocal, useSettings } from './lib/settings'
+import { COLUMNS, useColumnLayout } from './lib/columns'
 import { useRepoActions } from './hooks/useRepoActions'
 import { useRepoGraph } from './hooks/useRepoGraph'
 import { CommitDetails, type DetailsMode } from './components/CommitDetails'
@@ -24,6 +33,9 @@ import IconGitBranch from '~icons/lucide/git-branch'
 import IconArrowUp from '~icons/lucide/arrow-up'
 import IconArrowDown from '~icons/lucide/arrow-down'
 import IconX from '~icons/lucide/x'
+import IconCheck from '~icons/lucide/check'
+
+const DEFAULT_SPLIT_WIDTH = 520
 
 export function App() {
   return (
@@ -48,6 +60,7 @@ function Main() {
   const activeRepo = useRef<string | null>(null)
   const [menu, setMenu] = useState<ContextMenuState | null>(null)
   const [selectedState, setSelected] = useState<string | null>(null)
+  const [focusedState, setFocused] = useState<string | null>(null)
   const [compareState, setCompare] = useState<string | null>(null)
   const [diffState, setDiff] = useState<DiffTarget | null>(null)
   const [extraCommits, setExtraCommits] = useState(0)
@@ -68,6 +81,7 @@ function Main() {
         : null,
     )
     setSelected(null)
+    setFocused(null)
     setCompare(null)
     setDiff(null)
     setExtraCommits(0)
@@ -106,10 +120,25 @@ function Main() {
       toast.show('error', 'Could not add repository', (e as Error).message)
     }
   }
+  const restoreRepo = async (path: string, reselect: boolean) => {
+    try {
+      const r = await api.addRepo(path)
+      setRepos(r.repos)
+      if (reselect && r.added[0]) selectRepo(r.added[0].path)
+    } catch (e) {
+      toast.show('error', 'Could not restore repository', (e as Error).message)
+    }
+  }
   const removeRepo = async (path: string) => {
+    const name = repos.find((r) => r.path === path)?.name ?? path
+    const wasActive = activeRepo.current === path
     const r = await api.removeRepo(path)
     setRepos(r.repos)
     if (activeRepo.current === path) selectRepo(r.repos[0]?.path ?? null)
+    toast.show('info', `Removed ${name} from the list`, undefined, 8000, {
+      label: 'Undo',
+      onClick: () => void restoreRepo(path, wasActive),
+    })
   }
 
   // ----- graph data --------------------------------------------------------
@@ -193,7 +222,7 @@ function Main() {
   const [splitWidth, setSplitWidth] = useState(() =>
     loadLocal(
       'splitWidth',
-      520,
+      DEFAULT_SPLIT_WIDTH,
       (value): value is number =>
         typeof value === 'number' && Number.isFinite(value) && value >= 320,
     ),
@@ -204,8 +233,34 @@ function Main() {
   const selected = rowExists(selectedState) ? selectedState : null
   const compare = selected && rowExists(compareState) ? compareState : null
   const diff = selected ? diffState : null
+  // The keyboard cursor; defaults to the selection (or the first row) so Tab lands in the table.
+  const focused = rowExists(focusedState)
+    ? focusedState
+    : (selected ?? rows[0]?.commit.hash ?? null)
+
+  // Move DOM focus after the render that made the row tabbable (and, in the inline
+  // layout, moved the details row), so scrolling accounts for the final layout.
+  const focusPending = useRef(false)
+  const focusRow = (hash: string) => {
+    focusPending.current = true
+    setFocused(hash)
+  }
+  useEffect(() => {
+    if (!focusPending.current || !focused) return
+    focusPending.current = false
+    const el = document.getElementById(`commit-${focused}`)
+    el?.focus({ preventScroll: true })
+    el?.scrollIntoView?.({ block: 'nearest' })
+  })
+
+  const openDetails = (hash: string) => {
+    setCompare(null)
+    setDiff(null)
+    setSelected(hash)
+  }
 
   const onSelect = (hash: string, e: MouseEvent) => {
+    setFocused(hash)
     if (e.ctrlKey || e.metaKey) {
       if (!selected || selected === hash) {
         setSelected(hash)
@@ -217,9 +272,45 @@ function Main() {
       }
       return
     }
-    setCompare(null)
-    setDiff(null)
-    setSelected((s) => (s === hash ? null : hash))
+    // Clicking the selected row again keeps it open; Esc or the close button close details.
+    if (hash !== selected || compare) openDetails(hash)
+  }
+
+  const onRowKeyDown = (e: ReactKeyboardEvent, hash: string) => {
+    if (e.ctrlKey || e.metaKey || e.altKey) return
+    const i = rows.findIndex((r) => r.commit.hash === hash)
+    if (i < 0) return
+    if (e.key === 'Enter') {
+      e.preventDefault()
+      openDetails(hash)
+      return
+    }
+    const step: Record<string, number> = {
+      ArrowDown: i + 1,
+      j: i + 1,
+      ArrowUp: i - 1,
+      k: i - 1,
+      Home: 0,
+      End: rows.length - 1,
+    }
+    if (!Object.hasOwn(step, e.key)) return
+    e.preventDefault()
+    const target = rows[Math.min(Math.max(step[e.key], 0), rows.length - 1)].commit.hash
+    focusRow(target)
+    if (e.shiftKey && (e.key === 'ArrowDown' || e.key === 'ArrowUp')) {
+      // Shift+arrows compare the selected commit (or the row the cursor left) with the new row
+      const anchor = selected ?? hash
+      if (anchor === UNCOMMITTED || target === UNCOMMITTED) {
+        toast.show('info', 'Uncommitted changes cannot be compared with a commit', undefined, 3000)
+        return
+      }
+      setSelected(anchor)
+      setDiff(null)
+      setCompare(target === anchor ? null : target)
+      return
+    }
+    // While details are open they follow the cursor
+    if (selected) openDetails(target)
   }
 
   const detailsMode = useMemo<DetailsMode | null>(() => {
@@ -260,6 +351,28 @@ function Main() {
   }
   const onRefContextMenu = (e: MouseEvent, target: LabelTarget, row: TableRow) =>
     openMenu(e, actions.refMenu(target, row.commit))
+
+  // ----- columns -----------------------------------------------------------
+  const [columns, setColumns] = useColumnLayout()
+  const onHeaderContextMenu = (e: MouseEvent) => {
+    e.preventDefault()
+    openMenu(e, [
+      ...COLUMNS.map((c) => {
+        const shown = !columns.hidden.includes(c.id)
+        return {
+          label: c.label,
+          icon: shown ? <IconCheck /> : undefined,
+          onClick: () =>
+            setColumns({
+              ...columns,
+              hidden: shown ? [...columns.hidden, c.id] : columns.hidden.filter((h) => h !== c.id),
+            }),
+        }
+      }),
+      'separator',
+      { label: 'Reset Columns', onClick: () => setColumns({ hidden: [], widths: {} }) },
+    ])
+  }
 
   // ----- search ------------------------------------------------------------
   const [searchOpen, setSearchOpen] = useState(false)
@@ -316,6 +429,13 @@ function Main() {
     },
   }
 
+  const goToHead = () => {
+    const head = data?.head
+    if (!head || !rowExists(head)) return
+    focusRow(head)
+    if (selected) openDetails(head)
+  }
+
   // Keyboard shortcuts
   useEffect(() => {
     const onKey = (e: KeyboardEvent) => {
@@ -326,6 +446,9 @@ function Main() {
       if ((e.ctrlKey || e.metaKey) && e.key.toLowerCase() === 'f' && !typing) {
         e.preventDefault()
         setSearchOpen(true)
+      } else if ((e.ctrlKey || e.metaKey) && e.key.toLowerCase() === 'h' && !typing) {
+        e.preventDefault()
+        goToHead()
       } else if (e.key === 'F5') {
         e.preventDefault()
         refresh()
@@ -338,7 +461,7 @@ function Main() {
     }
     window.addEventListener('keydown', onKey)
     return () => window.removeEventListener('keydown', onKey)
-  }, [diff, menu, compare, selected, refresh])
+  })
 
   // ----- remotes -----------------------------------------------------------
   const addRemote = async () => {
@@ -428,6 +551,7 @@ function Main() {
         onSelectCommit={(h) => {
           setCompare(null)
           setSelected(h)
+          setFocused(h)
           document.getElementById(`commit-${h}`)?.scrollIntoView({ block: 'center' })
         }}
         onClose={() => {
@@ -464,7 +588,9 @@ function Main() {
         onRefresh={refresh}
         onFetch={() => void actions.fetchAll()}
         onPull={() => void actions.pull()}
+        onPullOptions={() => void actions.pullWithOptions()}
         onPush={() => void actions.push()}
+        onPushOptions={() => void actions.pushWithOptions()}
         onStash={() => void actions.stash()}
         onCreateBranch={() => data?.head && void actions.createBranchAt(data.head)}
         onAddRemote={() => void addRemote()}
@@ -554,13 +680,21 @@ function Main() {
               maxLanes={maxLanes}
               data={data}
               settings={settings}
+              columns={columns}
+              onColumnsChange={setColumns}
+              onHeaderContextMenu={onHeaderContextMenu}
               selected={selected}
               compare={compare}
+              focused={focused}
               searchMatches={searchMatches}
               currentMatch={currentMatch}
               onSelect={onSelect}
+              onRowKeyDown={onRowKeyDown}
               onContextMenu={onRowContextMenu}
               onRefContextMenu={onRefContextMenu}
+              onBranchDrop={(source, target, e) =>
+                openMenu(e, actions.branchDropMenu(source, target))
+              }
               moreAvailable={data.moreAvailable}
               loading={loading}
               onLoadMore={() => setExtraCommits((n) => n + settings.maxCommits)}
@@ -576,7 +710,11 @@ function Main() {
           >
             <div
               className="absolute top-0 bottom-0 -left-1 w-2 cursor-col-resize z-10 hover:bg-focus/40"
-              title="Drag to resize"
+              title="Drag to resize, double-click to reset"
+              onDoubleClick={() => {
+                setSplitWidth(DEFAULT_SPLIT_WIDTH)
+                saveLocal('splitWidth', DEFAULT_SPLIT_WIDTH)
+              }}
               onMouseDown={(e) => {
                 e.preventDefault()
                 const startX = e.clientX

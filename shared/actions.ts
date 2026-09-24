@@ -24,10 +24,15 @@ export interface ActionArgs {
   deleteBranch: { name: string; force?: boolean }
   renameBranch: { name: string; newName: string }
   merge: { ref: string; noFF?: boolean; squash?: boolean; noCommit?: boolean }
-  rebase: { ref: string; preserveMerges?: boolean; ignoreDate?: boolean }
+  /** branch: rebase that branch instead of the current one (git rebase <ref> <branch>) */
+  rebase: { ref: string; branch?: string; preserveMerges?: boolean; ignoreDate?: boolean }
   cherryPick: { hash: string; mainline?: string; recordOrigin?: boolean; noCommit?: boolean }
   revert: { hash: string; mainline?: string }
   reset: { hash: string; mode: 'soft' | 'mixed' | 'hard' }
+  /** Undo step: move the branch (or detached HEAD) back and reapply a working tree snapshot */
+  restoreHead: { hash: string; mode: 'soft' | 'mixed' | 'keep'; branch?: string; snapshot?: string }
+  /** Undo step: recreate a deleted branch and its upstream */
+  restoreBranch: { name: string; hash: string; upstream?: string }
   dropCommit: { hash: string }
   abort: { op: 'merge' | 'rebase' | 'cherry-pick' | 'revert' }
   continue: { op: 'rebase' | 'cherry-pick' | 'revert' }
@@ -57,6 +62,11 @@ export interface ActionArgs {
 export type ActionName = keyof ActionArgs
 export type ActionRequest = {
   [K in ActionName]: { repo: string; action: K; args: ActionArgs[K] }
+}[ActionName]
+
+/** An action that reverses a completed one; offered as "Undo" after dangerous operations. */
+export type UndoStep = {
+  [K in ActionName]: { label: string; action: K; args: ActionArgs[K] }
 }[ActionName]
 
 type Rule = 'string' | 'string?' | 'boolean?' | 'paths' | readonly string[]
@@ -91,7 +101,7 @@ const rules = {
   deleteBranch: { name: 'string', force: 'boolean?' },
   renameBranch: { name: 'string', newName: 'string' },
   merge: { ref: 'string', noFF: 'boolean?', squash: 'boolean?', noCommit: 'boolean?' },
-  rebase: { ref: 'string', preserveMerges: 'boolean?', ignoreDate: 'boolean?' },
+  rebase: { ref: 'string', branch: 'string?', preserveMerges: 'boolean?', ignoreDate: 'boolean?' },
   cherryPick: {
     hash: 'string',
     mainline: 'string?',
@@ -100,6 +110,13 @@ const rules = {
   },
   revert: { hash: 'string', mainline: 'string?' },
   reset: { hash: 'string', mode: ['soft', 'mixed', 'hard'] },
+  restoreHead: {
+    hash: 'string',
+    mode: ['soft', 'mixed', 'keep'],
+    branch: 'string?',
+    snapshot: 'string?',
+  },
+  restoreBranch: { name: 'string', hash: 'string', upstream: 'string?' },
   dropCommit: { hash: 'string' },
   abort: { op: ['merge', 'rebase', 'cherry-pick', 'revert'] },
   continue: { op: ['rebase', 'cherry-pick', 'revert'] },

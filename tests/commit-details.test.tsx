@@ -149,8 +149,13 @@ it('allows empty-message amend but prevents regular commit during an operation',
 })
 
 it('opens the shared discard confirmation and preserves the untracked opt-in default', async () => {
-  render(<Panel />, { wrapper: Wrapper })
-  fireEvent.click(await screen.findByRole('button', { name: 'Discard All…' }))
+  const { rerender } = render(<Panel />, { wrapper: Wrapper })
+  const button = (await screen.findByRole('button', { name: 'Discard All…' })) as HTMLButtonElement
+  expect(button.disabled).toBe(true)
+  vi.mocked(api.uncommitted).mockResolvedValue(staged)
+  rerender(<Panel version={1} />)
+  await waitFor(() => expect(button.disabled).toBe(false))
+  fireEvent.click(button)
   const checkbox = screen.getByRole('checkbox', { name: /untracked/i }) as HTMLInputElement
   expect(checkbox.checked).toBe(false)
   fireEvent.click(screen.getByRole('button', { name: 'Discard All' }))
@@ -202,4 +207,86 @@ it('refreshes detail data by version, suppresses stale responses, and recovers a
   rerender(view(2))
   expect(await screen.findByText('Current details')).toBeTruthy()
   expect(api.commit).toHaveBeenCalledTimes(3)
+})
+
+it('fills in the previous message for amend and restores the draft when amend is turned off', async () => {
+  vi.spyOn(api, 'commit').mockResolvedValue({
+    hash: 'abc',
+    subject: 'Previous subject',
+    body: 'Previous body',
+    parents: [],
+    author: '',
+    email: '',
+    date: 0,
+    committer: '',
+    committerEmail: '',
+    commitDate: 0,
+    files: [],
+  })
+  render(<Panel />, { wrapper: Wrapper })
+  const textarea = (await screen.findByRole('textbox')) as HTMLTextAreaElement
+  fireEvent.change(textarea, { target: { value: 'Work in progress' } })
+  fireEvent.click(screen.getByRole('checkbox', { name: 'Amend last commit' }))
+  await waitFor(() => expect(textarea.value).toBe('Previous subject\n\nPrevious body'))
+  expect(api.commit).toHaveBeenCalledWith('A', 'abc')
+  fireEvent.click(screen.getByRole('checkbox', { name: 'Amend last commit' }))
+  expect(textarea.value).toBe('Work in progress')
+})
+
+it('keeps a per-repository draft, records sent messages, and hints at subject length', async () => {
+  vi.mocked(api.uncommitted).mockResolvedValue(staged)
+  const first = render(<Panel />, { wrapper: Wrapper })
+  fireEvent.change(await screen.findByRole('textbox'), { target: { value: 'x'.repeat(60) } })
+  expect(screen.getByText('Subject 60/50')).toBeTruthy()
+  first.unmount()
+  const second = render(<Panel />, { wrapper: Wrapper })
+  const textarea = (await screen.findByRole('textbox')) as HTMLTextAreaElement
+  expect(textarea.value).toBe('x'.repeat(60))
+  second.unmount()
+  render(<Panel repo="B" />, { wrapper: Wrapper })
+  expect(((await screen.findByRole('textbox')) as HTMLTextAreaElement).value).toBe('')
+  cleanup()
+  render(<Panel />, { wrapper: Wrapper })
+  const box = (await screen.findByRole('textbox')) as HTMLTextAreaElement
+  fireEvent.change(box, { target: { value: 'Useful change' } })
+  fireEvent.keyDown(box, { key: 'Enter', ctrlKey: true })
+  await waitFor(() => expect(box.value).toBe(''))
+  expect(localStorage.getItem('embegrav.commitDraft:A')).toBe('""')
+  fireEvent.click(screen.getByTitle('Recent commit messages'))
+  fireEvent.click(screen.getByRole('button', { name: 'Useful change' }))
+  expect(box.value).toBe('Useful change')
+})
+
+it('stages and unstages from inline row buttons and with Space', async () => {
+  vi.stubGlobal(
+    'IntersectionObserver',
+    class {
+      observe() {}
+      unobserve() {}
+      disconnect() {}
+    },
+  )
+  vi.mocked(api.uncommitted).mockResolvedValue({
+    ...staged,
+    unstaged: [{ path: 'changed.txt', status: 'M', additions: 1, deletions: 1 }],
+  })
+  const { container } = render(<Panel />, { wrapper: Wrapper })
+  await screen.findByRole('textbox')
+  const roots = () =>
+    [...container.querySelectorAll('file-tree-container')].map((host) => host.shadowRoot!)
+  await waitFor(() =>
+    expect(roots()[1]?.querySelector('[data-item-path="changed.txt"]')).toBeTruthy(),
+  )
+  const unstagedRow = roots()[1].querySelector('[data-item-path="changed.txt"]')!
+  fireEvent.mouseMove(unstagedRow)
+  fireEvent.click(await screen.findByRole('button', { name: 'Stage changed.txt' }))
+  await waitFor(() =>
+    expect(api.action).toHaveBeenCalledWith('A', 'stage', { paths: ['changed.txt'] }),
+  )
+  const stagedRow = roots()[0].querySelector<HTMLElement>('[data-item-path="new.txt"]')!
+  fireEvent.click(stagedRow)
+  fireEvent.keyDown(stagedRow, { key: ' ' })
+  await waitFor(() =>
+    expect(api.action).toHaveBeenCalledWith('A', 'unstage', { paths: ['new.txt'] }),
+  )
 })

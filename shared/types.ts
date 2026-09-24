@@ -1,3 +1,5 @@
+import type { UndoStep } from './actions.ts'
+
 // Types shared between the server and the web client.
 
 export interface RepoInfo {
@@ -38,6 +40,8 @@ export interface GitRef {
   type: RefType
   /** For remote refs: remote name; for local heads: upstream remote name if set */
   remote?: string
+  /** For local heads: short upstream name ("origin/main") if set */
+  upstream?: string
   annotated?: boolean
 }
 
@@ -160,4 +164,6 @@ export interface FileDiffResponse {
 export interface ActionResult {
   ok: boolean
   output: string
+  /** Present when the action can be reverted (hard reset, drop commit, delete branch, discard) */
+  undo?: UndoStep
 }

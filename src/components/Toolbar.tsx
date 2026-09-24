@@ -1,4 +1,4 @@
-import { useEffect, useRef } from 'react'
+import { useEffect, useRef, type ReactNode } from 'react'
 import type { GraphData, RepoInfo } from '@shared/types'
 import type { Settings } from '@/lib/settings'
 import { Dropdown, DropdownItem } from './Dropdown'
@@ -47,8 +47,12 @@ interface Props {
   loading: boolean
   onRefresh: () => void
   onFetch: () => void
+  /** Pull from the upstream (or ask where to pull from when there is none) */
   onPull: () => void
+  onPullOptions: () => void
+  /** Push to the upstream (or ask where to push when there is none) */
   onPush: () => void
+  onPushOptions: () => void
   onStash: () => void
   onCreateBranch: () => void
   onAddRemote: () => void
@@ -63,6 +67,7 @@ export function Toolbar(p: Props) {
   const localBranches = (p.data?.refs ?? []).filter((r) => r.type === 'head')
   const remoteBranches = (p.data?.refs ?? []).filter((r) => r.type === 'remote')
   const allSelected = p.branches === null
+  const upstream = p.data?.upstream
 
   useEffect(() => {
     if (p.search.open) searchInput.current?.focus()
@@ -111,7 +116,7 @@ export function Toolbar(p: Props) {
                 </DropdownItem>
                 <button
                   type="button"
-                  className="icon-btn self-center mr-1"
+                  className="icon-btn self-center ml-3 mr-1 hover:!text-danger"
                   title="Remove from list"
                   onClick={(e) => {
                     e.stopPropagation()
@@ -286,34 +291,24 @@ export function Toolbar(p: Props) {
       >
         <IconCloudDownload className="w-4 h-4" />
       </button>
-      <button
-        type="button"
-        className="icon-btn relative"
-        title="Pull"
+      <SplitButton
+        icon={<IconDownload className="w-4 h-4" />}
+        title={upstream ? `Pull from ${upstream.name}` : 'Pull…'}
+        optionsTitle="Pull with options (remote, branch, rebase)…"
+        count={upstream?.behind}
         disabled={!p.data || p.data.remotes.length === 0}
         onClick={p.onPull}
-      >
-        <IconDownload className="w-4 h-4" />
-        {p.data?.upstream && p.data.upstream.behind > 0 && (
-          <span className="badge absolute -top-1 -right-1 !h-4 !min-w-4 !px-1 !text-[10px]">
-            {p.data.upstream.behind}
-          </span>
-        )}
-      </button>
-      <button
-        type="button"
-        className="icon-btn relative"
-        title="Push"
+        onOptions={p.onPullOptions}
+      />
+      <SplitButton
+        icon={<IconUpload className="w-4 h-4" />}
+        title={upstream && p.data?.currentBranch ? `Push to ${upstream.name}` : 'Push…'}
+        optionsTitle="Push with options (remote, set upstream, force with lease)…"
+        count={upstream?.ahead}
         disabled={!p.data || p.data.remotes.length === 0 || !p.data.currentBranch}
         onClick={p.onPush}
-      >
-        <IconUpload className="w-4 h-4" />
-        {p.data?.upstream && p.data.upstream.ahead > 0 && (
-          <span className="badge absolute -top-1 -right-1 !h-4 !min-w-4 !px-1 !text-[10px]">
-            {p.data.upstream.ahead}
-          </span>
-        )}
-      </button>
+        onOptions={p.onPushOptions}
+      />
 
       <Dropdown
         icon={<IconCloud className="w-4 h-4" />}
@@ -386,5 +381,45 @@ export function Toolbar(p: Props) {
         <IconSettings className="w-4 h-4" />
       </button>
     </div>
+  )
+}
+
+/** An icon button that acts immediately, with a narrow chevron that opens the options dialog. */
+function SplitButton(p: {
+  icon: ReactNode
+  title: string
+  optionsTitle: string
+  count?: number
+  disabled: boolean
+  onClick: () => void
+  onOptions: () => void
+}) {
+  return (
+    <span className="inline-flex items-center">
+      <button
+        type="button"
+        className="icon-btn relative !rounded-r-none"
+        title={p.title}
+        disabled={p.disabled}
+        onClick={p.onClick}
+      >
+        {p.icon}
+        {!!p.count && p.count > 0 && (
+          <span className="badge absolute -top-1 -right-1 !h-4 !min-w-4 !px-1 !text-[10px]">
+            {p.count}
+          </span>
+        )}
+      </button>
+      <button
+        type="button"
+        className="icon-btn !w-3.5 !rounded-l-none"
+        title={p.optionsTitle}
+        aria-label={p.optionsTitle}
+        disabled={p.disabled}
+        onClick={p.onOptions}
+      >
+        <IconChevronDown className="w-3 h-3 opacity-70" />
+      </button>
+    </span>
   )
 }
