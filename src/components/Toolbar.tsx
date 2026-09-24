@@ -1,4 +1,4 @@
-import { useEffect, useRef, type ReactNode } from 'react'
+import { useEffect, useRef, useState, type ReactNode } from 'react'
 import type { GraphData, RepoInfo } from '@shared/types'
 import type { Settings } from '@/lib/settings'
 import { Dropdown, DropdownItem } from './Dropdown'
@@ -64,25 +64,12 @@ interface Props {
 export function Toolbar(p: Props) {
   const searchInput = useRef<HTMLInputElement>(null)
   const current = p.repos.find((r) => r.path === p.repo)
-  const localBranches = (p.data?.refs ?? []).filter((r) => r.type === 'head')
-  const remoteBranches = (p.data?.refs ?? []).filter((r) => r.type === 'remote')
   const allSelected = p.branches === null
   const upstream = p.data?.upstream
 
   useEffect(() => {
     if (p.search.open) searchInput.current?.focus()
   }, [p.search.open])
-
-  const toggleBranch = (name: string) => {
-    if (p.branches === null) {
-      p.onBranchesChange([name])
-      return
-    }
-    const next = p.branches.includes(name)
-      ? p.branches.filter((b) => b !== name)
-      : [...p.branches, name]
-    p.onBranchesChange(next.length === 0 ? null : next)
-  }
 
   const branchesLabel = allSelected
     ? 'Branches: Show All'
@@ -147,55 +134,15 @@ export function Toolbar(p: Props) {
         title="Filter the graph to selected branches"
       >
         {() => (
-          <div className="py-1 min-w-[260px]">
-            <DropdownItem active={allSelected} onClick={() => p.onBranchesChange(null)}>
-              <input type="checkbox" readOnly checked={allSelected} /> Show All
-            </DropdownItem>
-            <div className="context-menu-sep" />
-            {localBranches.map((b) => (
-              <DropdownItem key={b.name} onClick={() => toggleBranch(b.name)}>
-                <input
-                  type="checkbox"
-                  readOnly
-                  checked={!allSelected && p.branches!.includes(b.name)}
-                />
-                <span className={`truncate ${b.name === p.data?.currentBranch ? 'font-bold' : ''}`}>
-                  {b.name}
-                </span>
-              </DropdownItem>
-            ))}
-            {p.settings.showRemoteBranches && remoteBranches.length > 0 && (
-              <>
-                <div className="context-menu-sep" />
-                <div className="px-3 py-1 text-xs text-fg-dim uppercase">Remote branches</div>
-                {remoteBranches.map((b) => (
-                  <DropdownItem key={b.name} onClick={() => toggleBranch(b.name)}>
-                    <input
-                      type="checkbox"
-                      readOnly
-                      checked={!allSelected && p.branches!.includes(b.name)}
-                    />
-                    <span className="truncate">{b.name}</span>
-                  </DropdownItem>
-                ))}
-              </>
-            )}
-            {localBranches.length === 0 && <div className="px-3 py-1 text-fg-dim">No branches</div>}
-          </div>
+          <BranchFilter
+            data={p.data}
+            branches={p.branches}
+            onBranchesChange={p.onBranchesChange}
+            showRemote={p.settings.showRemoteBranches}
+            onShowRemoteChange={(v) => p.updateSettings({ showRemoteBranches: v })}
+          />
         )}
       </Dropdown>
-
-      <label
-        className="flex items-center gap-1 cursor-pointer select-none"
-        title="Show remote branches"
-      >
-        <input
-          type="checkbox"
-          checked={p.settings.showRemoteBranches}
-          onChange={(e) => p.updateSettings({ showRemoteBranches: e.target.checked })}
-        />
-        Show Remote Branches
-      </label>
 
       <span className="flex-1" />
 
@@ -380,6 +327,95 @@ export function Toolbar(p: Props) {
       <button type="button" className="icon-btn" title="Settings" onClick={p.onOpenSettings}>
         <IconSettings className="w-4 h-4" />
       </button>
+    </div>
+  )
+}
+
+/** Branch filter panel: a search field and the remote toggle stay pinned above the branch list. */
+function BranchFilter(p: {
+  data: GraphData | null
+  branches: string[] | null
+  onBranchesChange: (b: string[] | null) => void
+  showRemote: boolean
+  onShowRemoteChange: (show: boolean) => void
+}) {
+  const [query, setQuery] = useState('')
+  const input = useRef<HTMLInputElement>(null)
+  const allSelected = p.branches === null
+  const needle = query.trim().toLowerCase()
+  const matches = (name: string) => name.toLowerCase().includes(needle)
+  const refs = p.data?.refs ?? []
+  const localBranches = refs.filter((r) => r.type === 'head' && matches(r.name))
+  const remoteBranches = p.showRemote
+    ? refs.filter((r) => r.type === 'remote' && matches(r.name))
+    : []
+
+  useEffect(() => {
+    input.current?.focus()
+  }, [])
+
+  const toggleBranch = (name: string) => {
+    if (p.branches === null) {
+      p.onBranchesChange([name])
+      return
+    }
+    const next = p.branches.includes(name)
+      ? p.branches.filter((b) => b !== name)
+      : [...p.branches, name]
+    p.onBranchesChange(next.length === 0 ? null : next)
+  }
+
+  const item = (name: string, bold = false) => (
+    <DropdownItem key={name} onClick={() => toggleBranch(name)}>
+      <input type="checkbox" readOnly checked={!allSelected && p.branches!.includes(name)} />
+      <span className={`truncate ${bold ? 'font-bold' : ''}`}>{name}</span>
+    </DropdownItem>
+  )
+
+  return (
+    <div className="pb-1 min-w-[260px]">
+      <div className="sticky top-0 z-10 flex flex-col gap-1.5 px-2 pt-2 pb-1.5 bg-[var(--vscode-dropdown-background)] border-b border-border">
+        <input
+          ref={input}
+          type="text"
+          className="w-full"
+          placeholder="Search branches"
+          aria-label="Search branches"
+          value={query}
+          onChange={(e) => setQuery(e.target.value)}
+          onKeyDown={(e) => {
+            if (e.key !== 'Enter') return
+            e.preventDefault()
+            const first = localBranches[0] ?? remoteBranches[0]
+            if (first) toggleBranch(first.name)
+          }}
+        />
+        <label className="flex items-center gap-2 px-1 cursor-pointer select-none">
+          <input
+            type="checkbox"
+            checked={p.showRemote}
+            onChange={(e) => p.onShowRemoteChange(e.target.checked)}
+          />
+          Show remote branches
+        </label>
+      </div>
+      <DropdownItem active={allSelected} onClick={() => p.onBranchesChange(null)}>
+        <input type="checkbox" readOnly checked={allSelected} /> Show All
+      </DropdownItem>
+      <div className="context-menu-sep" />
+      {localBranches.map((b) => item(b.name, b.name === p.data?.currentBranch))}
+      {remoteBranches.length > 0 && (
+        <>
+          {localBranches.length > 0 && <div className="context-menu-sep" />}
+          <div className="px-3 py-1 text-xs text-fg-dim uppercase">Remote branches</div>
+          {remoteBranches.map((b) => item(b.name))}
+        </>
+      )}
+      {localBranches.length === 0 && remoteBranches.length === 0 && (
+        <div className="px-3 py-1 text-fg-dim">
+          {needle ? 'No matching branches' : 'No branches'}
+        </div>
+      )}
     </div>
   )
 }

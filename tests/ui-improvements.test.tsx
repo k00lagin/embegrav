@@ -259,3 +259,26 @@ it('shows an Undo action for undoable results and runs the returned step', async
     hash: B,
   })
 })
+
+it('searches branches and toggles remote branches from the branch filter', async () => {
+  render(<App />)
+  await screen.findByText('Fix typo')
+  expect(screen.queryByText('Show Remote Branches')).toBeNull()
+  fireEvent.click(screen.getByTitle('Filter the graph to selected branches'))
+  const search = screen.getByRole('textbox', { name: 'Search branches' })
+  expect(document.activeElement).toBe(search)
+  const panel = within(search.closest('.dropdown-panel') as HTMLElement)
+  fireEvent.change(search, { target: { value: 'SEARCH' } })
+  expect(panel.getByText('feature/search')).toBeTruthy()
+  expect(panel.getByText('origin/feature/search')).toBeTruthy()
+  expect(panel.queryByText('origin/main')).toBeNull()
+  fireEvent.click(panel.getByRole('checkbox', { name: 'Show remote branches' }))
+  expect(JSON.parse(localStorage.getItem('embegrav.settings')!).showRemoteBranches).toBe(false)
+  expect(panel.queryByText('origin/feature/search')).toBeNull()
+  fireEvent.keyDown(search, { key: 'Enter' })
+  expect(screen.getByTitle('Filter the graph to selected branches').textContent).toContain(
+    'Branch: feature/search',
+  )
+  fireEvent.change(search, { target: { value: 'nope' } })
+  expect(panel.getByText('No matching branches')).toBeTruthy()
+})
