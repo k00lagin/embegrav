@@ -463,6 +463,8 @@ input[type='radio'] {
 .section-header {
   display: flex;
   align-items: center;
+  min-height: 32px;
+  flex-shrink: 0;
   gap: 6px;
   padding: 3px 8px;
   font-size: 11px;

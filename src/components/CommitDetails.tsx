@@ -56,7 +56,7 @@ export function CommitDetails(props: Props) {
       {layout === 'row' && (
         <button
           type="button"
-          className="icon-btn absolute top-1 right-1 z-10"
+          className="icon-btn absolute top-[3px] right-1 z-10"
           title="Close details"
           onClick={props.onClose}
         >
@@ -101,7 +101,7 @@ function layoutClasses(layout: DetailsLayout) {
         wrap: 'flex min-h-[140px]',
         info: 'w-[420px] shrink-0 p-3 border-r border-border overflow-x-hidden',
         files: 'flex-1 min-w-0 flex flex-col',
-        header: 'section-header !border-t-0 pr-8',
+        header: 'section-header !border-t-0 !pr-10',
         treeRows: 16,
       }
 }
