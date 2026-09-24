@@ -1,4 +1,6 @@
 import {
+  useLayoutEffect,
+  useRef,
   useState,
   type DragEvent,
   type KeyboardEvent,
@@ -21,6 +23,7 @@ import { useTheme } from '@/theme/ThemeProvider'
 import { GraphCell, GraphPassThrough } from './GraphCell'
 import { BRANCH_DRAG_TYPE, RefLabel, type LabelTarget } from './RefLabel'
 import IconLoader from '~icons/lucide/loader-circle'
+import IconGitGraph from '~icons/lucide/git-graph'
 
 export interface TableRow {
   commit: GitCommit
@@ -63,6 +66,43 @@ const COLUMN_HEADERS: Record<ColumnId, { title?: string }> = {
   date: {},
   author: {},
   hash: {},
+}
+
+function GraphHeader() {
+  const container = useRef<HTMLSpanElement>(null)
+  const label = useRef<HTMLSpanElement>(null)
+  const [compact, setCompact] = useState(true)
+
+  useLayoutEffect(() => {
+    const cell = container.current!
+    const text = label.current!
+    const measure = () => {
+      setCompact(text.getBoundingClientRect().width > cell.getBoundingClientRect().width)
+    }
+    // Keep measuring the hidden text so either column or font changes can restore it.
+    const observer = new ResizeObserver(measure)
+    observer.observe(cell)
+    observer.observe(text)
+    return () => observer.disconnect()
+  }, [])
+
+  return (
+    <th title="Graph" aria-label="Graph">
+      <span
+        ref={container}
+        className="relative flex items-center overflow-hidden"
+        aria-hidden="true"
+      >
+        <span
+          ref={label}
+          className={`shrink-0 whitespace-nowrap ${compact ? 'absolute invisible' : ''}`}
+        >
+          Graph
+        </span>
+        {compact && <IconGitGraph className="w-4 h-4 shrink-0" />}
+      </span>
+    </th>
+  )
 }
 
 export function CommitTable(p: Props) {
@@ -118,7 +158,7 @@ export function CommitTable(p: Props) {
       </colgroup>
       <thead onContextMenu={p.onHeaderContextMenu}>
         <tr>
-          <th>Graph</th>
+          <GraphHeader />
           <th title="Right-click a column header to show or hide columns">Description</th>
           {visible.map((c) => (
             <th key={c.id} title={COLUMN_HEADERS[c.id].title} className="relative">

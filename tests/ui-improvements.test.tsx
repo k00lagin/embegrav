@@ -83,6 +83,52 @@ afterEach(() => {
 
 const row = (hash: string) => document.getElementById(`commit-${hash}`)!
 
+it('uses a graph icon only while the header text does not fit, including after font changes', async () => {
+  let available = 20
+  let textWidth = 35
+  let resized!: () => void
+  const disconnect = vi.fn()
+  vi.stubGlobal(
+    'ResizeObserver',
+    class {
+      constructor(callback: () => void) {
+        resized = callback
+      }
+      observe() {}
+      disconnect = disconnect
+    },
+  )
+  const originalRect = HTMLElement.prototype.getBoundingClientRect
+  vi.spyOn(HTMLElement.prototype, 'getBoundingClientRect').mockImplementation(function (
+    this: HTMLElement,
+  ) {
+    const rect = originalRect.call(this)
+    if (this.tagName === 'SPAN' && this.textContent === 'Graph')
+      return { ...rect, width: this.getAttribute('aria-hidden') === 'true' ? available : textWidth }
+    return rect
+  })
+  const { unmount } = render(<App />)
+  const header = await screen.findByRole('columnheader', { name: 'Graph' })
+  const label = within(header).getByText('Graph')
+  expect(header.querySelector('svg')).toBeTruthy()
+  expect(label.classList.contains('invisible')).toBe(true)
+  expect(header.title).toBe('Graph')
+  act(() => {
+    available = 40
+    resized()
+  })
+  expect(header.querySelector('svg')).toBeNull()
+  expect(label.classList.contains('invisible')).toBe(false)
+  act(() => {
+    textWidth = 45
+    resized()
+  })
+  expect(header.querySelector('svg')).toBeTruthy()
+  expect(label.classList.contains('invisible')).toBe(true)
+  unmount()
+  expect(disconnect).toHaveBeenCalledOnce()
+})
+
 it('merges a local branch label with its identical upstream and keeps diverged ones apart', async () => {
   render(<App />)
   await screen.findByText('Fix typo')

@@ -71,6 +71,13 @@ const wrapper = ({ children }: { children: ReactNode }) => (
 )
 
 beforeEach(() => {
+  vi.stubGlobal(
+    'ResizeObserver',
+    class {
+      observe() {}
+      disconnect() {}
+    },
+  )
   localStorage.clear()
   localStorage.setItem(
     'embegrav.settings',
@@ -81,6 +88,7 @@ beforeEach(() => {
 afterEach(() => {
   cleanup()
   vi.restoreAllMocks()
+  vi.unstubAllGlobals()
 })
 
 describe('repository ownership', () => {
