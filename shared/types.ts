@@ -7,6 +7,19 @@ export interface RepoInfo {
   name: string
 }
 
+export interface DirectoryEntry {
+  name: string
+  path: string
+  /** The directory contains a `.git` entry */
+  isRepo: boolean
+}
+
+export interface DirectoryListing {
+  /** The listed directory */
+  directory: string
+  entries: DirectoryEntry[]
+}
+
 export interface StashInfo {
   /** e.g. stash@{0} */
   selector: string

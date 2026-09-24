@@ -4,6 +4,7 @@ import type {
   CommitDetails,
   CommitStats,
   CompareDetails,
+  DirectoryListing,
   FileDiffRequest,
   FileDiffResponse,
   GraphData,
@@ -41,6 +42,9 @@ export const api = {
   repos: () => request<{ repos: RepoInfo[] }>('GET', '/api/repos'),
   addRepo: (path: string) => post<{ repos: RepoInfo[]; added: RepoInfo[] }>('/api/repos', { path }),
   removeRepo: (path: string) => request<{ repos: RepoInfo[] }>('DELETE', '/api/repos', { path }),
+  browse: (path: string) =>
+    request<DirectoryListing>('GET', `/api/browse?path=${encodeURIComponent(path)}`),
+  browseHome: () => request<{ path: string }>('GET', '/api/browse/home'),
   graph: (req: GraphRequest) => post<GraphData>('/api/graph', req),
   commit: (repo: string, hash: string) => post<CommitDetails>('/api/commit', { repo, hash }),
   uncommitted: (repo: string) => post<UncommittedDetails>('/api/uncommitted', { repo }),

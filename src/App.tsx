@@ -13,6 +13,7 @@ import { layoutGraph } from './graph/layout'
 import { UNCOMMITTED, pluralize, shortHash } from './lib/format'
 import { loadLocal, saveLocal, useSettings } from './lib/settings'
 import { COLUMNS, useColumnLayout } from './lib/columns'
+import { parentPath } from './lib/paths'
 import { useRepoActions } from './hooks/useRepoActions'
 import { useRepoGraph } from './hooks/useRepoGraph'
 import { CommitDetails, type DetailsMode } from './components/CommitDetails'
@@ -21,6 +22,7 @@ import { ContextMenu, type ContextMenuState, type MenuEntry } from './components
 import { DialogProvider, useDialog } from './components/Dialog'
 import { checkedValue, textValue } from './components/dialogValues'
 import { DiffViewer, type DiffTarget } from './components/DiffViewer'
+import { RepoPicker } from './components/RepoPicker'
 import type { LabelTarget } from './components/RefLabel'
 import { SettingsPanel } from './components/SettingsPanel'
 import { ToastProvider, useToast } from './components/Toast'
@@ -104,21 +106,13 @@ function Main() {
     if (repo) saveLocal('lastRepo', repo)
   }, [repo])
 
-  const addRepo = async () => {
-    const path = await dialog.prompt(
-      'Add Repository',
-      'Path to a git repository (or a folder containing repositories)',
-      '',
-      { submitLabel: 'Add' },
-    )
-    if (!path) return
-    try {
-      const r = await api.addRepo(path)
-      setRepos(r.repos)
-      if (r.added[0]) selectRepo(r.added[0].path)
-    } catch (e) {
-      toast.show('error', 'Could not add repository', (e as Error).message)
-    }
+  const [repoPickerOpen, setRepoPickerOpen] = useState(false)
+  const addRepo = () => setRepoPickerOpen(true)
+  const submitRepo = async (path: string) => {
+    const r = await api.addRepo(path)
+    setRepos(r.repos)
+    if (r.added[0]) selectRepo(r.added[0].path)
+    setRepoPickerOpen(false)
   }
   const restoreRepo = async (path: string, reselect: boolean) => {
     try {
@@ -576,7 +570,7 @@ function Main() {
         repos={repos}
         repo={repo}
         onSelectRepo={selectRepo}
-        onAddRepo={() => void addRepo()}
+        onAddRepo={addRepo}
         onRemoveRepo={(p) => void removeRepo(p)}
         data={data}
         branches={branches}
@@ -669,7 +663,7 @@ function Main() {
                 No repositories registered. Start the server inside a git repository, pass paths on
                 the command line, or add one now.
               </div>
-              <button type="button" className="btn" onClick={() => void addRepo()}>
+              <button type="button" className="btn" onClick={addRepo}>
                 Add repository…
               </button>
             </div>
@@ -817,6 +811,13 @@ function Main() {
       </div>
 
       <ContextMenu menu={menu} onClose={() => setMenu(null)} />
+      {repoPickerOpen && (
+        <RepoPicker
+          initialPath={repo && parentPath(repo)}
+          onSubmit={submitRepo}
+          onClose={() => setRepoPickerOpen(false)}
+        />
+      )}
       {settingsOpen && (
         <SettingsPanel
           settings={settings}

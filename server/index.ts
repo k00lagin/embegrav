@@ -9,6 +9,7 @@ import { spawn } from 'node:child_process'
 import type { FileDiffRequest, GraphRequest } from '../shared/types.ts'
 import { decodeActionRequest } from '../shared/actions.ts'
 import { runAction } from './actions.ts'
+import { browse, homeDirectory } from './browse.ts'
 import { GitError } from './git.ts'
 import {
   getCommitDetails,
@@ -88,6 +89,10 @@ api.delete('/repos', async (c) => {
   if (body.path) removeRepo(body.path)
   return c.json({ repos: listRepos() })
 })
+
+api.get('/browse', async (c) => c.json(await browse(c.req.query('path') ?? '')))
+
+api.get('/browse/home', (c) => c.json({ path: homeDirectory() }))
 
 api.post('/graph', async (c) => {
   const body = (await c.req.json()) as GraphRequest
