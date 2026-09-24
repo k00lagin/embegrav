@@ -307,6 +307,10 @@ input[type='radio'] {
   cursor: col-resize;
   z-index: 1;
 }
+.commit-table th:last-child .col-resizer {
+  /* Keep the outer resize handle from creating horizontal overflow. */
+  right: 0;
+}
 .col-resizer:hover {
   background: color-mix(in srgb, var(--vscode-focusBorder) 60%, transparent);
 }
