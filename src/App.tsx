@@ -328,6 +328,11 @@ function Main() {
     if (e.ctrlKey || e.metaKey || e.altKey) return
     const i = rows.findIndex((r) => r.commit.hash === hash)
     if (i < 0) return
+    if (e.key === 'ContextMenu' || (e.shiftKey && e.key === 'F10')) {
+      e.preventDefault()
+      onRowContextMenu(e, rows[i])
+      return
+    }
     if (e.key === 'Enter') {
       e.preventDefault()
       openDetails(hash)
@@ -376,11 +381,17 @@ function Main() {
   }, [selected, compare, rows])
 
   // ----- context menus -----------------------------------------------------
-  const openMenu = (e: MouseEvent, items: MenuEntry[]) => {
+  const openMenu = (e: MouseEvent | ReactKeyboardEvent, items: MenuEntry[]) => {
     if (items.length === 0) return
-    setMenu({ x: e.clientX, y: e.clientY, items })
+    const rect = e.currentTarget.getBoundingClientRect()
+    setMenu({
+      x: 'clientX' in e ? e.clientX : rect.left,
+      y: 'clientY' in e ? e.clientY : rect.bottom,
+      items,
+    })
   }
-  const onRowContextMenu = (e: MouseEvent, row: TableRow) => {
+  const onRowContextMenu = (e: MouseEvent | ReactKeyboardEvent, row: TableRow) => {
+    document.getElementById(`commit-${row.commit.hash}`)?.focus({ preventScroll: true })
     if (row.kind === 'uncommitted') return openMenu(e, actions.uncommittedMenu())
     if (row.kind === 'stash' && row.commit.stash)
       return openMenu(e, actions.stashMenu(row.commit.stash))
@@ -833,6 +844,8 @@ function Main() {
               className="status-bar-button max-w-[240px]"
               title="Switch branch"
               aria-label={`Switch branch (${data.currentBranch ?? 'detached HEAD'})`}
+              aria-haspopup="menu"
+              aria-expanded={menu?.searchPlaceholder === 'Search branches'}
               disabled={loading || !!inProgress || !data.refs.some((ref) => ref.type === 'head')}
               onClick={(e) => {
                 const rect = e.currentTarget.getBoundingClientRect()
@@ -903,6 +916,8 @@ function Main() {
                 type="button"
                 className="status-bar-button"
                 title="Go to stash"
+                aria-haspopup="menu"
+                aria-expanded={menu?.searchPlaceholder === 'Search stashes'}
                 disabled={loading}
                 onClick={(e) => {
                   const rect = e.currentTarget.getBoundingClientRect()

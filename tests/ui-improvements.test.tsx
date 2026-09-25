@@ -105,7 +105,7 @@ it('filters status branches, handles no matches and resets the search when reope
   expect(document.activeElement).toBe(input)
   fireEvent.change(input, { target: { value: 'missing' } })
   expect(screen.getByText('No results')).toBeTruthy()
-  expect(screen.queryByRole('button', { name: 'main' })).toBeNull()
+  expect(screen.queryByRole('menuitem', { name: 'main' })).toBeNull()
   fireEvent.keyDown(input, { key: 'Enter' })
   expect(api.action).not.toHaveBeenCalled()
   fireEvent.keyDown(input, { key: 'Escape' })
@@ -113,7 +113,7 @@ it('filters status branches, handles no matches and resets the search when reope
   const reopened = screen.getByRole('textbox', { name: 'Search branches' })
   expect(reopened).toHaveProperty('value', '')
   fireEvent.change(reopened, { target: { value: ' SEARCH ' } })
-  expect(screen.queryByRole('button', { name: 'main' })).toBeNull()
+  expect(screen.queryByRole('menuitem', { name: 'main' })).toBeNull()
   fireEvent.keyDown(reopened, { key: 'Enter' })
   await waitFor(() =>
     expect(api.action).toHaveBeenCalledWith('R', 'checkoutBranch', { name: 'feature/search' }),
@@ -129,8 +129,8 @@ it('filters stashes by message and selector and navigates to their rows without 
   const input = screen.getByRole('textbox', { name: 'Search stashes' })
   expect(document.activeElement).toBe(input)
   fireEvent.change(input, { target: { value: ' SEARCH ' } })
-  expect(screen.queryByRole('button', { name: 'stash@{1}: On main: Old layout' })).toBeNull()
-  fireEvent.click(screen.getByRole('button', { name: 'stash@{0}: WIP: Search dialog' }))
+  expect(screen.queryByRole('menuitem', { name: 'stash@{1}: On main: Old layout' })).toBeNull()
+  fireEvent.click(screen.getByRole('menuitem', { name: 'stash@{0}: WIP: Search dialog' }))
   await waitFor(() => expect(document.activeElement).toBe(row(B)))
   expect(row(B).getAttribute('aria-selected')).toBe('true')
   expect(scroll).toHaveBeenCalledWith({ block: 'nearest' })
@@ -139,7 +139,7 @@ it('filters stashes by message and selector and navigates to their rows without 
   const reopened = screen.getByRole('textbox', { name: 'Search stashes' })
   expect(reopened).toHaveProperty('value', '')
   fireEvent.change(reopened, { target: { value: 'stash@{1}' } })
-  expect(screen.queryByRole('button', { name: 'stash@{0}: WIP: Search dialog' })).toBeNull()
+  expect(screen.queryByRole('menuitem', { name: 'stash@{0}: WIP: Search dialog' })).toBeNull()
   fireEvent.keyDown(reopened, { key: 'Enter' })
   await waitFor(() => expect(document.activeElement).toBe(row(C)))
   expect(row(C).getAttribute('aria-selected')).toBe('true')
@@ -161,7 +161,7 @@ it('loads more history until the stash selected in the status menu is visible', 
     .mockResolvedValue(stashGraph)
   render(<App />)
   fireEvent.click(await screen.findByRole('button', { name: '2 stashes' }))
-  fireEvent.click(screen.getByRole('button', { name: 'stash@{1}: On main: Old layout' }))
+  fireEvent.click(screen.getByRole('menuitem', { name: 'stash@{1}: On main: Old layout' }))
   await waitFor(() => expect(document.activeElement).toBe(row(C)))
   expect(row(C).getAttribute('aria-selected')).toBe('true')
   expect(api.graph).toHaveBeenCalledTimes(3)
@@ -178,7 +178,7 @@ it('stops loading a stash when the repository request fails', async () => {
     .mockRejectedValue(new Error('History unavailable'))
   render(<App />)
   fireEvent.click(await screen.findByRole('button', { name: '2 stashes' }))
-  fireEvent.click(screen.getByRole('button', { name: 'stash@{1}: On main: Old layout' }))
+  fireEvent.click(screen.getByRole('menuitem', { name: 'stash@{1}: On main: Old layout' }))
   expect((await screen.findByRole('alert')).textContent).toContain('History unavailable')
   expect(api.graph).toHaveBeenCalledTimes(2)
 })
@@ -191,7 +191,7 @@ it('stops loading history when the server returns no additional commits', async 
   })
   render(<App />)
   fireEvent.click(await screen.findByRole('button', { name: '2 stashes' }))
-  fireEvent.click(screen.getByRole('button', { name: 'stash@{1}: On main: Old layout' }))
+  fireEvent.click(screen.getByRole('menuitem', { name: 'stash@{1}: On main: Old layout' }))
   expect(await screen.findByText('Could not find stash in the loaded history')).toBeTruthy()
   expect(api.graph).toHaveBeenCalledTimes(2)
 })
@@ -200,23 +200,23 @@ it('switches local branches from the status bar and refreshes the repository', a
   render(<App />)
   const status = screen.getByRole('group', { name: 'Repository status' })
   fireEvent.click(await within(status).findByRole('button', { name: 'Switch branch (main)' }))
-  expect(screen.getByRole('button', { name: 'main' })).toHaveProperty('disabled', true)
-  expect(screen.queryByRole('button', { name: 'origin/main' })).toBeNull()
-  fireEvent.click(screen.getByRole('button', { name: 'feature/search' }))
+  expect(screen.getByRole('menuitem', { name: 'main' })).toHaveProperty('ariaDisabled', 'true')
+  expect(screen.queryByRole('menuitem', { name: 'origin/main' })).toBeNull()
+  fireEvent.click(screen.getByRole('menuitem', { name: 'feature/search' }))
   await waitFor(() =>
     expect(api.action).toHaveBeenCalledWith('R', 'checkoutBranch', { name: 'feature/search' }),
   )
   await waitFor(() => expect(api.graph).toHaveBeenCalledTimes(2))
-  expect(screen.queryByRole('button', { name: 'feature/search' })).toBeNull()
+  expect(screen.queryByRole('menuitem', { name: 'feature/search' })).toBeNull()
 })
 
 it('allows branch switching from detached HEAD but disables it during a merge', async () => {
   vi.mocked(api.graph).mockResolvedValue({ ...graph, currentBranch: null, upstream: null })
   render(<App />)
   fireEvent.click(await screen.findByRole('button', { name: 'Switch branch (detached HEAD)' }))
-  expect(screen.getByRole('button', { name: 'main' })).toHaveProperty('disabled', false)
+  expect(screen.getByRole('menuitem', { name: 'main' })).toHaveProperty('ariaDisabled', null)
   fireEvent.keyDown(window, { key: 'Escape' })
-  expect(screen.queryByRole('button', { name: 'main' })).toBeNull()
+  expect(screen.queryByRole('menuitem', { name: 'main' })).toBeNull()
   vi.mocked(api.graph).mockResolvedValue({
     ...graph,
     state: { ...graph.state, mergeInProgress: true },
@@ -364,7 +364,7 @@ it('hides columns from the header menu and persists the layout', async () => {
   await screen.findByText('Fix typo')
   expect(screen.getByRole('columnheader', { name: 'Author' })).toBeTruthy()
   fireEvent.contextMenu(screen.getByRole('columnheader', { name: 'Author' }))
-  fireEvent.click(screen.getByRole('button', { name: 'Author' }))
+  fireEvent.click(screen.getByRole('menuitem', { name: 'Author' }))
   expect(screen.queryByRole('columnheader', { name: 'Author' })).toBeNull()
   expect(screen.queryByText('Ann')).toBeNull()
   expect(JSON.parse(localStorage.getItem('embegrav.columns')!)).toEqual({
@@ -372,6 +372,28 @@ it('hides columns from the header menu and persists the layout', async () => {
     widths: {},
   })
 })
+
+it.each(['F10', 'ContextMenu'])(
+  'opens the graph context menu with %s and resumes graph navigation after Escape',
+  async (key) => {
+    render(<App />)
+    await screen.findByText('Fix typo')
+    row(B).focus()
+    fireEvent.keyDown(row(B), { key: 'Enter' })
+    expect(await screen.findByText('Details of Add search')).toBeTruthy()
+    fireEvent.keyDown(row(B), { key, shiftKey: key === 'F10' })
+    const items = within(screen.getByRole('menu')).getAllByRole('menuitem')
+    expect(document.activeElement).toBe(items[0])
+    fireEvent.keyDown(items[0], { key: 'ArrowDown' })
+    expect(document.activeElement).toBe(items[1])
+    fireEvent.keyDown(items[1], { key: 'Escape' })
+    expect(screen.queryByRole('menu')).toBeNull()
+    expect(document.activeElement).toBe(row(B))
+    expect(screen.getByText('Details of Add search')).toBeTruthy()
+    fireEvent.keyDown(row(B), { key: 'ArrowDown' })
+    await waitFor(() => expect(document.activeElement).toBe(row(C)))
+  },
+)
 
 it('offers undo after removing a repository from the list', async () => {
   vi.spyOn(api, 'removeRepo').mockResolvedValue({ repos: [] })
@@ -396,8 +418,8 @@ it('offers merge and rebase when a branch label is dropped on the current branch
   }
   fireEvent.dragOver(row(A), { dataTransfer })
   fireEvent.drop(within(row(A)).getByText('main'), { dataTransfer })
-  expect(screen.getByRole('button', { name: 'Merge feature/search into main…' })).toBeTruthy()
-  fireEvent.click(screen.getByRole('button', { name: 'Rebase main on feature/search…' }))
+  expect(screen.getByRole('menuitem', { name: 'Merge feature/search into main…' })).toBeTruthy()
+  fireEvent.click(screen.getByRole('menuitem', { name: 'Rebase main on feature/search…' }))
   fireEvent.click(await screen.findByRole('button', { name: 'Rebase' }))
   await waitFor(() =>
     expect(api.action).toHaveBeenCalledWith('R', 'rebase', {
@@ -419,7 +441,7 @@ it('shows an Undo action for undoable results and runs the returned step', async
   })
   render(<App />)
   fireEvent.click(await screen.findByText('feature/search'))
-  fireEvent.click(screen.getByRole('button', { name: 'Delete Branch…' }))
+  fireEvent.click(screen.getByRole('menuitem', { name: 'Delete Branch…' }))
   fireEvent.click(screen.getByRole('button', { name: 'Delete' }))
   const undo = await screen.findByRole('button', { name: 'Undo' })
   await act(async () => fireEvent.click(undo))

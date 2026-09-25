@@ -434,11 +434,17 @@ input[type='radio'] {
   border: none;
   color: inherit;
 }
-.context-menu-item:hover:not(:disabled) {
+.context-menu-item:hover:not(:disabled):not([aria-disabled='true']),
+.context-menu-item:focus-visible {
   background: var(--vscode-menu-selectionBackground);
   color: var(--vscode-menu-selectionForeground);
 }
-.context-menu-item.danger:hover:not(:disabled) {
+.context-menu-item[aria-disabled='true'] {
+  opacity: 0.5;
+  cursor: default;
+}
+.context-menu-item.danger:hover:not(:disabled):not([aria-disabled='true']),
+.context-menu-item.danger:focus-visible:not([aria-disabled='true']) {
   background: var(--vscode-gitDecoration-deletedResourceForeground);
   color: #fff;
 }

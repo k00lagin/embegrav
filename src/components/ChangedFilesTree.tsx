@@ -4,7 +4,7 @@ import { themeToTreeStyles } from '@pierre/trees'
 import type { GitStatusEntry, ContextMenuItem, ContextMenuOpenContext } from '@pierre/trees'
 import type { ChangedFile } from '@shared/types'
 import { useTheme } from '@/theme/ThemeProvider'
-import type { MenuEntry } from './ContextMenu'
+import { MenuItems, handleMenuKeyDown, type MenuEntry } from './MenuItems'
 
 /** A button shown on the hovered row (like VS Code's inline stage / unstage / discard). */
 export interface RowAction {
@@ -311,28 +311,22 @@ function TreeMenu({
   entries: MenuEntry[]
   close: (o?: { restoreFocus?: boolean }) => void
 }) {
+  const ref = useRef<HTMLDivElement>(null)
+  useEffect(() => {
+    // Pierre cannot autofocus React-rendered slot content; it mounts after onOpen.
+    ref.current?.querySelector<HTMLElement>('[role="menuitem"]')?.focus()
+  }, [])
+
   if (entries.length === 0) return null
   return (
-    <div className="context-menu !static" data-file-tree-context-menu-root="true">
-      {entries.map((item, i) =>
-        item === 'separator' ? (
-          <div key={i} className="context-menu-sep" />
-        ) : (
-          <button
-            key={i}
-            type="button"
-            className={`context-menu-item${item.danger ? ' danger' : ''}`}
-            disabled={item.disabled}
-            onClick={() => {
-              close()
-              item.onClick()
-            }}
-          >
-            <span className="w-4 shrink-0 inline-flex justify-center opacity-80">{item.icon}</span>
-            <span className="flex-1">{item.label}</span>
-          </button>
-        ),
-      )}
+    <div
+      ref={ref}
+      className="context-menu !static"
+      data-file-tree-context-menu-root="true"
+      // Handle the slotted menu before Pierre's shadow-DOM tree swallows navigation keys.
+      onKeyDownCapture={(e) => handleMenuKeyDown(e, close)}
+    >
+      <MenuItems items={entries} onClose={close} />
     </div>
   )
 }

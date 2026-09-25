@@ -213,6 +213,7 @@ export function DiffViewer({
           className="min-w-0 flex items-center gap-1 rounded px-1 h-[26px] hover:bg-bg-4"
           title={filePath}
           aria-label={`Switch file (${filePath})`}
+          aria-haspopup="menu"
           aria-expanded={!!menu}
           onMouseDown={(e) => e.stopPropagation()}
           onClick={(e) => {

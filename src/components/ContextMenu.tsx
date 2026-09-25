@@ -1,15 +1,8 @@
-import { useEffect, useLayoutEffect, useRef, useState, type ReactNode } from 'react'
+import { useCallback, useEffect, useLayoutEffect, useRef, useState } from 'react'
 
-export interface MenuItem {
-  label: string
-  icon?: ReactNode
-  onClick: () => void
-  disabled?: boolean
-  danger?: boolean
-  hint?: string
-}
+import { MenuItems, handleMenuKeyDown, type MenuEntry } from './MenuItems'
 
-export type MenuEntry = MenuItem | 'separator'
+export type { MenuItem, MenuEntry } from './MenuItems'
 
 export interface ContextMenuState {
   x: number
@@ -27,6 +20,8 @@ interface Props {
 export function ContextMenu({ menu, onClose }: Props) {
   const ref = useRef<HTMLDivElement>(null)
   const input = useRef<HTMLInputElement>(null)
+  const previousFocus = useRef<HTMLElement | null>(null)
+  const focused = useRef(false)
   const [pos, setPos] = useState<{ left: number; top: number } | null>(null)
   const [search, setSearch] = useState<{ menu: ContextMenuState; query: string } | null>(null)
   const query = search?.menu === menu ? (search?.query ?? '') : ''
@@ -38,8 +33,34 @@ export function ContextMenu({ menu, onClose }: Props) {
         (item !== 'separator' && `${item.label} ${item.hint ?? ''}`.toLowerCase().includes(needle)),
     ) ?? []
 
+  const restoreFocus = useCallback(() => {
+    if (previousFocus.current?.isConnected) previousFocus.current.focus({ preventScroll: true })
+  }, [])
+  const close = () => {
+    restoreFocus()
+    onClose()
+  }
+
+  useLayoutEffect(() => {
+    if (!menu) return
+    const container = ref.current
+    previousFocus.current =
+      document.activeElement instanceof HTMLElement ? document.activeElement : null
+    focused.current = false
+    return () => {
+      // An action may already have moved focus to a dialog or another row.
+      if (document.activeElement === document.body || container?.contains(document.activeElement)) {
+        restoreFocus()
+      }
+    }
+  }, [menu, restoreFocus])
+
   useEffect(() => {
-    if (menu?.searchPlaceholder && pos) input.current?.focus()
+    if (!menu || !pos || focused.current) return
+    focused.current = true
+    const target =
+      input.current ?? ref.current?.querySelector<HTMLElement>('[role="menuitem"]') ?? ref.current
+    target?.focus()
   }, [menu, pos])
 
   useLayoutEffect(() => {
@@ -59,9 +80,6 @@ export function ContextMenu({ menu, onClose }: Props) {
 
   useEffect(() => {
     if (!menu) return
-    const onKey = (e: KeyboardEvent) => {
-      if (e.key === 'Escape') onClose()
-    }
     const onDown = (e: MouseEvent) => {
       if (ref.current && !ref.current.contains(e.target as Node)) onClose()
     }
@@ -69,12 +87,10 @@ export function ContextMenu({ menu, onClose }: Props) {
       // Moving focus into the search field must not dismiss the menu.
       if (!e.relatedTarget) onClose()
     }
-    window.addEventListener('keydown', onKey)
     window.addEventListener('mousedown', onDown)
     window.addEventListener('blur', onBlur)
     window.addEventListener('resize', onClose)
     return () => {
-      window.removeEventListener('keydown', onKey)
       window.removeEventListener('mousedown', onDown)
       window.removeEventListener('blur', onBlur)
       window.removeEventListener('resize', onClose)
@@ -85,6 +101,7 @@ export function ContextMenu({ menu, onClose }: Props) {
   return (
     <div
       ref={ref}
+      tabIndex={-1}
       className={`context-menu${menu.searchPlaceholder ? ' context-menu-searchable' : ''}`}
       style={{
         left: pos?.left ?? menu.x,
@@ -92,6 +109,7 @@ export function ContextMenu({ menu, onClose }: Props) {
         visibility: pos ? 'visible' : 'hidden',
       }}
       onContextMenu={(e) => e.preventDefault()}
+      onKeyDown={(e) => handleMenuKeyDown(e, close, input.current)}
     >
       {menu.searchPlaceholder && (
         <div className="shrink-0 px-2 pt-1 pb-2 border-b border-border">
@@ -103,47 +121,16 @@ export function ContextMenu({ menu, onClose }: Props) {
             aria-label={menu.searchPlaceholder}
             value={query}
             onChange={(e) => setSearch({ menu, query: e.target.value })}
-            onKeyDown={(e) => {
-              if (e.key !== 'Enter') return
-              e.preventDefault()
-              const first = items.find(
-                (item): item is MenuItem => item !== 'separator' && !item.disabled,
-              )
-              if (first) {
-                onClose()
-                first.onClick()
-              }
-            }}
           />
         </div>
       )}
-      <div className={menu.searchPlaceholder ? 'min-h-0 overflow-y-auto' : undefined}>
-        {items.map((item, i) =>
-          item === 'separator' ? (
-            <div key={i} className="context-menu-sep" />
-          ) : (
-            <button
-              key={i}
-              type="button"
-              className={`context-menu-item${item.danger ? ' danger' : ''}`}
-              disabled={item.disabled}
-              onClick={() => {
-                onClose()
-                item.onClick()
-              }}
-            >
-              <span className="w-4 shrink-0 inline-flex justify-center opacity-80">
-                {item.icon}
-              </span>
-              <span className="flex-1 min-w-0 break-words">{item.label}</span>
-              {item.hint && <span className="text-fg-dim text-xs">{item.hint}</span>}
-            </button>
-          ),
-        )}
-        {menu.searchPlaceholder && items.length === 0 && (
-          <div className="px-3 py-1 text-fg-dim">No results</div>
-        )}
-      </div>
+      <MenuItems
+        items={items}
+        onClose={close}
+        label={menu.searchPlaceholder}
+        className={menu.searchPlaceholder ? 'min-h-0 overflow-y-auto' : undefined}
+        emptyText={menu.searchPlaceholder ? 'No results' : undefined}
+      />
     </div>
   )
 }

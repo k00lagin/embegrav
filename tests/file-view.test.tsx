@@ -129,7 +129,7 @@ it('synchronizes sidebar selection with file navigation and keeps the sidebar op
     ),
   )
   fireEvent.click(screen.getByRole('button', { name: 'Switch file (src/other.ts)' }))
-  fireEvent.click(screen.getByRole('button', { name: /src\/new\.ts\s*R/ }))
+  fireEvent.click(screen.getByRole('menuitem', { name: /src\/new\.ts\s*R/ }))
   await waitFor(() =>
     expect(
       root().querySelector('[data-item-path="src/new.ts"]')?.hasAttribute('data-item-selected'),
@@ -147,7 +147,7 @@ it('uses the previous version for deleted files and preserves comparisons with w
   const { rerender } = render(<View value={{ ...target, siblings, view: 'after' }} />)
   await screen.findByTestId('full-file')
   fireEvent.click(screen.getByRole('button', { name: 'Switch file (src/new.ts)' }))
-  fireEvent.click(screen.getByRole('button', { name: /src\/deleted\.ts\s*D/ }))
+  fireEvent.click(screen.getByRole('menuitem', { name: /src\/deleted\.ts\s*D/ }))
   await waitFor(() =>
     expect(api.fileContent).toHaveBeenLastCalledWith('R', 'parent', 'src/deleted.ts'),
   )
@@ -155,7 +155,7 @@ it('uses the previous version for deleted files and preserves comparisons with w
   rerender(<View value={withWorkingFile({ ...target, siblings })} />)
   await screen.findByTestId('patch')
   fireEvent.click(screen.getByRole('button', { name: 'Switch file (src/new.ts)' }))
-  fireEvent.click(screen.getByRole('button', { name: /src\/other\.ts\s*M/ }))
+  fireEvent.click(screen.getByRole('menuitem', { name: /src\/other\.ts\s*M/ }))
   await waitFor(() =>
     expect(api.fileDiff).toHaveBeenLastCalledWith(
       expect.objectContaining({ path: 'src/other.ts', from: 'commit', to: 'WORKING' }),

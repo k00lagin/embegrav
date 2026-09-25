@@ -55,7 +55,7 @@ it('opens a file context menu without opening the diff on right click', async ()
     clientX: 50,
     clientY: 50,
   })
-  const view = await screen.findByRole('button', { name: 'View File at this Revision' })
+  const view = await screen.findByRole('menuitem', { name: 'View File at this Revision' })
   expect(open).not.toHaveBeenCalled()
   fireEvent.click(view)
   expect(open).toHaveBeenCalledWith({ ...target, view: 'after' })
@@ -85,6 +85,90 @@ function treeRoot(container: HTMLElement) {
   if (!host?.shadowRoot) throw new Error('Tree has not mounted')
   return host.shadowRoot
 }
+
+it('moves focus through a file context menu with arrows', async () => {
+  const file: ChangedFile = { path: 'file.txt', status: 'M', additions: 1, deletions: 0 }
+  const { container } = render(
+    <ThemeProvider>
+      <ChangedFilesTree
+        files={[file]}
+        onOpenFile={vi.fn()}
+        menuFor={() => [
+          { label: 'First action', onClick: vi.fn() },
+          { label: 'Second action', onClick: vi.fn() },
+        ]}
+      />
+    </ThemeProvider>,
+  )
+  await waitFor(() =>
+    expect(treeRoot(container).querySelector('[data-item-path="file.txt"]')).toBeTruthy(),
+  )
+  fireEvent.contextMenu(treeRoot(container).querySelector('[data-item-path="file.txt"]')!)
+  const first = (await screen.findByText('First action')).closest('button')!
+  const second = screen.getByText('Second action').closest('button')!
+  expect(document.activeElement).toBe(first)
+  fireEvent.keyDown(first, { key: 'ArrowDown' })
+  expect(document.activeElement).toBe(second)
+  fireEvent.keyDown(second, { key: 'ArrowDown' })
+  expect(document.activeElement).toBe(first)
+  fireEvent.keyDown(first, { key: 'ArrowUp' })
+  expect(document.activeElement).toBe(second)
+  fireEvent.keyDown(second, { key: 'Home' })
+  expect(document.activeElement).toBe(first)
+  fireEvent.keyDown(first, { key: 'End' })
+  expect(document.activeElement).toBe(second)
+})
+
+it.each(['Enter', ' ', 'Escape', 'Tab'])(
+  'handles %j in the file menu without triggering tree or diff shortcuts and restores row focus',
+  async (key) => {
+    const action = vi.fn()
+    const disabledAction = vi.fn()
+    const open = vi.fn()
+    const primary = vi.fn()
+    const shortcut = vi.fn()
+    const file: ChangedFile = { path: 'file.txt', status: 'M', additions: 1, deletions: 0 }
+    const { container } = render(
+      <ThemeProvider>
+        <div onKeyDown={shortcut}>
+          <ChangedFilesTree
+            files={[file]}
+            onOpenFile={open}
+            rowActions={() => [{ label: 'Stage', icon: null, onClick: primary, primary: true }]}
+            menuFor={() => [
+              { label: 'Unavailable', disabled: true, onClick: disabledAction },
+              'separator',
+              { label: 'File action', onClick: action },
+            ]}
+          />
+        </div>
+      </ThemeProvider>,
+    )
+    await waitFor(() =>
+      expect(treeRoot(container).querySelector('[data-item-path="file.txt"]')).toBeTruthy(),
+    )
+    const root = treeRoot(container)
+    const row = root.querySelector<HTMLElement>('[data-item-path="file.txt"]')!
+    fireEvent.contextMenu(row)
+    const disabled = await screen.findByRole('menuitem', { name: 'Unavailable' })
+    expect(document.activeElement).toBe(disabled)
+    fireEvent.keyDown(disabled, { key: 'Enter' })
+    fireEvent.keyDown(disabled, { key: ' ' })
+    fireEvent.click(disabled)
+    expect(disabledAction).not.toHaveBeenCalled()
+    fireEvent.keyDown(disabled, { key: 'ArrowDown' })
+    const item = screen.getByRole('menuitem', { name: 'File action' })
+    expect(document.activeElement).toBe(item)
+    const defaultAllowed = fireEvent.keyDown(item, { key })
+    expect(defaultAllowed).toBe(key === 'Tab')
+    expect(action).toHaveBeenCalledTimes(key === 'Enter' || key === ' ' ? 1 : 0)
+    await waitFor(() => expect(screen.queryByRole('menu')).toBeNull())
+    expect(root.activeElement).toBe(row)
+    expect(open).not.toHaveBeenCalled()
+    expect(primary).not.toHaveBeenCalled()
+    expect(shortcut).not.toHaveBeenCalled()
+  },
+)
 
 it('opens a newly staged file and uses current counts, status, and theme after updates', async () => {
   const open = vi.fn()
