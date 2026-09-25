@@ -14,6 +14,7 @@ import { useErrorToast } from '@/hooks/useErrorToast'
 import { ChangedFilesTree, type RowAction } from './ChangedFilesTree'
 import type { DiffTarget } from './DiffViewer'
 import type { MenuEntry } from './ContextMenu'
+import { createFileMenu } from './fileMenu'
 import { useDialog } from './Dialog'
 import { Dropdown, DropdownItem } from './Dropdown'
 import IconX from '~icons/lucide/x'
@@ -173,6 +174,19 @@ function CommitView({
   if (state.error) return null
   if (!d) return <Loading />
   const from = d.parents[0] ?? 'EMPTY'
+  const siblings = d.files.map((file) => ({
+    file,
+    from,
+    to: d.hash,
+    label: `${shortHash(from)} → ${shortHash(d.hash)}`,
+  }))
+  const targetFor = (file: ChangedFile): DiffTarget => ({
+    file,
+    from,
+    to: d.hash,
+    label: `${shortHash(from)} → ${shortHash(d.hash)}`,
+    siblings,
+  })
   return (
     <div className={cls.wrap}>
       <div className={cls.info}>
@@ -265,14 +279,8 @@ function CommitView({
             files={d.files}
             maxRows={cls.treeRows}
             emptyText="No file changes in this commit"
-            onOpenFile={(file) =>
-              onOpenDiff({
-                file,
-                from,
-                to: d.hash,
-                label: `${shortHash(from)} → ${shortHash(d.hash)}`,
-              })
-            }
+            onOpenFile={(file) => onOpenDiff(targetFor(file))}
+            menuFor={createFileMenu(repo, targetFor, onOpenDiff, actions.copy)}
           />
         </div>
       </div>
@@ -287,6 +295,7 @@ function CompareView({
   from,
   to,
   version,
+  actions,
   onOpenDiff,
   layout,
 }: Props & { from: string; to: string; layout: DetailsLayout }) {
@@ -296,6 +305,19 @@ function CompareView({
   if (state.error) return null
   if (!state.data) return <Loading />
   const files = state.data.files
+  const siblings = files.map((file) => ({
+    file,
+    from,
+    to,
+    label: `${shortHash(from)} → ${shortHash(to)}`,
+  }))
+  const targetFor = (file: ChangedFile): DiffTarget => ({
+    file,
+    from,
+    to,
+    label: `${shortHash(from)} → ${shortHash(to)}`,
+    siblings,
+  })
   return (
     <div className={cls.wrap}>
       <div className={cls.info}>
@@ -328,9 +350,8 @@ function CompareView({
             files={files}
             maxRows={cls.treeRows}
             emptyText="No differences"
-            onOpenFile={(file) =>
-              onOpenDiff({ file, from, to, label: `${shortHash(from)} → ${shortHash(to)}` })
-            }
+            onOpenFile={(file) => onOpenDiff(targetFor(file))}
+            menuFor={createFileMenu(repo, targetFor, onOpenDiff, actions.copy)}
           />
         </div>
       </div>
@@ -439,28 +460,28 @@ function UncommittedView({
     }
   }
 
-  const openStaged = (file: ChangedFile) =>
-    onOpenDiff({
-      file,
-      from: data.head ? 'HEAD' : 'EMPTY',
-      to: 'INDEX',
-      label: 'HEAD → Index (staged)',
-    })
-  const openUnstaged = (file: ChangedFile) =>
-    onOpenDiff({
-      file,
-      from: file.status === '?' ? 'HEAD' : 'INDEX',
-      to: 'WORKING',
-      label: file.status === '?' ? 'Untracked file' : 'Index → Working tree (unstaged)',
-    })
+  const stagedFiles = (d?.staged ?? []).map((file) => ({
+    file,
+    from: data.head ? 'HEAD' : 'EMPTY',
+    to: 'INDEX',
+    label: 'HEAD → Index (staged)',
+  }))
+  const unstagedFiles = (d?.unstaged ?? []).map((file) => ({
+    file,
+    from: file.status === '?' ? 'HEAD' : 'INDEX',
+    to: 'WORKING',
+    label: file.status === '?' ? 'Untracked file' : 'Index → Working tree (unstaged)',
+  }))
+  const stagedTarget = (file: ChangedFile): DiffTarget => ({
+    ...stagedFiles.find((item) => item.file.path === file.path)!,
+    siblings: stagedFiles,
+  })
+  const unstagedTarget = (file: ChangedFile): DiffTarget => ({
+    ...unstagedFiles.find((item) => item.file.path === file.path)!,
+    siblings: unstagedFiles,
+  })
 
   const stagedMenu = (file: ChangedFile | undefined, path: string, isDir: boolean): MenuEntry[] => [
-    ...(file
-      ? [
-          { label: 'Open Diff', icon: <IconFileDiff />, onClick: () => openStaged(file) },
-          'separator' as const,
-        ]
-      : []),
     {
       label: isDir ? 'Unstage Folder' : 'Unstage',
       icon: <IconMinus />,
@@ -472,20 +493,12 @@ function UncommittedView({
       danger: true,
       onClick: () => void discard(path),
     },
-    'separator',
-    { label: 'Copy Path', icon: <IconCopy />, onClick: () => void actions.copy(path, 'Path') },
   ]
   const unstagedMenu = (
     file: ChangedFile | undefined,
     path: string,
     isDir: boolean,
   ): MenuEntry[] => [
-    ...(file
-      ? [
-          { label: 'Open Diff', icon: <IconFileDiff />, onClick: () => openUnstaged(file) },
-          'separator' as const,
-        ]
-      : []),
     {
       label: isDir ? 'Stage Folder' : 'Stage',
       icon: <IconPlus />,
@@ -521,8 +534,6 @@ function UncommittedView({
       danger: true,
       onClick: () => void discard(path),
     },
-    'separator',
-    { label: 'Copy Path', icon: <IconCopy />, onClick: () => void actions.copy(path, 'Path') },
   ]
 
   const stage = (path: string) =>
@@ -690,8 +701,8 @@ function UncommittedView({
             files={d.staged}
             emptyText="No staged changes"
             maxRows={treeRows}
-            onOpenFile={openStaged}
-            menuFor={stagedMenu}
+            onOpenFile={(file) => onOpenDiff(stagedTarget(file))}
+            menuFor={createFileMenu(repo, stagedTarget, onOpenDiff, actions.copy, stagedMenu)}
             rowActions={stagedActions}
           />
         </div>
@@ -714,8 +725,8 @@ function UncommittedView({
             files={d.unstaged}
             emptyText="No unstaged changes"
             maxRows={treeRows}
-            onOpenFile={openUnstaged}
-            menuFor={unstagedMenu}
+            onOpenFile={(file) => onOpenDiff(unstagedTarget(file))}
+            menuFor={createFileMenu(repo, unstagedTarget, onOpenDiff, actions.copy, unstagedMenu)}
             rowActions={unstagedActions}
           />
         </div>

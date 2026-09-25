@@ -24,6 +24,8 @@ interface Props {
   rowActions?: (file: ChangedFile | undefined, path: string, isDirectory: boolean) => RowAction[]
   emptyText?: string
   maxRows?: number
+  selectedPath?: string
+  fillHeight?: boolean
 }
 
 const ROW_HEIGHT = 22
@@ -52,7 +54,10 @@ export function ChangedFilesTree({
   rowActions,
   emptyText = 'No changes',
   maxRows = 16,
+  selectedPath,
+  fillHeight = false,
 }: Props) {
+  const syncingSelection = useRef(false)
   const wrapRef = useRef<HTMLDivElement>(null)
   const [hover, setHover] = useState<HoveredRow | null>(null)
   const paths = useMemo(() => files.map((f) => f.path), [files])
@@ -111,6 +116,7 @@ export function ChangedFilesTree({
       }
     },
     onSelectionChange: (selected) => {
+      if (syncingSelection.current) return
       const path = selected[0]
       if (!path) return
       const f = filesRef.current.get(path)
@@ -122,6 +128,21 @@ export function ChangedFilesTree({
     model.resetPaths(paths)
     model.setGitStatus(gitStatus)
   }, [model, paths, gitStatus])
+
+  useEffect(() => {
+    if (!selectedPath || !paths.includes(selectedPath)) return
+    syncingSelection.current = true
+    try {
+      for (const path of model.getSelectedPaths()) {
+        if (path !== selectedPath) model.getItem(path)?.deselect()
+      }
+      model.getItem(selectedPath)?.select()
+      model.scrollToPath(selectedPath)
+    } finally {
+      syncingSelection.current = false
+    }
+    // oxlint-disable-next-line react/exhaustive-effect-dependencies -- reapply selection if the tree model is replaced
+  }, [model, selectedPath, paths])
 
   useEffect(() => {
     // Status can be unchanged when counts or theme colors change. Force the
@@ -189,7 +210,7 @@ export function ChangedFilesTree({
   return (
     <div
       ref={wrapRef}
-      className="relative"
+      className={`relative${fillHeight ? ' h-full' : ''}`}
       onMouseMove={trackHover}
       onMouseLeave={() => setHover(null)}
       onWheel={() => setHover(null)}
@@ -206,7 +227,7 @@ export function ChangedFilesTree({
       <FileTree
         model={model}
         className="changed-files-tree"
-        style={{ ...treeStyles, height: rows * ROW_HEIGHT + 8 }}
+        style={{ ...treeStyles, height: fillHeight ? '100%' : rows * ROW_HEIGHT + 8 }}
         renderContextMenu={
           menuFor
             ? (item: ContextMenuItem, ctx: ContextMenuOpenContext) => (

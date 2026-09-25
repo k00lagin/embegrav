@@ -1,10 +1,16 @@
 import { useCallback, useEffect, useMemo, useState } from 'react'
-import { PatchDiff, type FileDiffOptions } from '@pierre/diffs/react'
+import { File, PatchDiff, type FileDiffOptions, type FileOptions } from '@pierre/diffs/react'
 import type { ChangedFile } from '@shared/types'
 import { api } from '@/api'
 import { useTheme } from '@/theme/ThemeProvider'
 import { shikiThemeFor } from '@/theme/vscode'
 import { useErrorToast } from '@/hooks/useErrorToast'
+import { ChangedFilesTree } from './ChangedFilesTree'
+import { ContextMenu, type ContextMenuState } from './ContextMenu'
+import { withWorkingFile } from './fileMenu'
+import IconChevronDown from '~icons/lucide/chevron-down'
+import IconPanelRight from '~icons/lucide/panel-right'
+import IconCheck from '~icons/lucide/check'
 import IconX from '~icons/lucide/x'
 import IconColumns2 from '~icons/lucide/columns-2'
 import IconRows3 from '~icons/lucide/rows-3'
@@ -19,6 +25,11 @@ export interface DiffTarget {
   to: string
   /** Human readable description of what is being compared */
   label: string
+  /** Open a complete file instead of its patch. */
+  view?: 'before' | 'after' | 'working'
+  /** Other files in the same commit, comparison or staging section. */
+  siblings?: DiffTarget[]
+  workingComparison?: boolean
 }
 
 interface Props {
@@ -40,48 +51,103 @@ const STATUS_LABEL: Record<string, string> = {
   '?': 'Untracked',
 }
 
-export function DiffViewer({ repo, target, diffStyle, onDiffStyleChange, onClose }: Props) {
+export function DiffViewer({
+  repo,
+  target: initialTarget,
+  diffStyle,
+  onDiffStyleChange,
+  onClose,
+}: Props) {
+  const [selection, setSelection] = useState<{ source: DiffTarget; target: DiffTarget } | null>(
+    null,
+  )
+  const target = selection?.source === initialTarget ? selection.target : initialTarget
+  const [sidebarOpen, setSidebarOpen] = useState(false)
+  const [menu, setMenu] = useState<ContextMenuState | null>(null)
+  const siblings = useMemo(() => target.siblings ?? [target], [target])
+  const files = useMemo(() => siblings.map((item) => item.file), [siblings])
+  type View = 'diff' | NonNullable<DiffTarget['view']>
+  const [viewState, setViewState] = useState<{ target: DiffTarget; view: View } | null>(null)
+  const view = viewState?.target === target ? viewState.view : (target.view ?? 'diff')
+  const selectFile = (file: ChangedFile) => {
+    const sibling = siblings.find((item) => item.file.path === file.path)
+    if (!sibling || file.path === target.file.path) return
+    const next = { ...(target.workingComparison ? withWorkingFile(sibling) : sibling), siblings }
+    let nextView = view
+    if (nextView === 'after' && next.file.status === 'D') nextView = 'before'
+    if (
+      nextView === 'before' &&
+      (next.from === 'EMPTY' || next.file.status === 'A' || next.file.status === '?')
+    )
+      nextView = 'after'
+    setSelection({ source: initialTarget, target: next })
+    setViewState({ target: next, view: nextView })
+  }
+  const filePath = view === 'before' ? (target.file.oldPath ?? target.file.path) : target.file.path
+  const revision = view === 'before' ? target.from : view === 'working' ? 'WORKING' : target.to
   const [attempt, setAttempt] = useState(0)
   const retry = useCallback(() => setAttempt((value) => value + 1), [])
   const [state, setState] = useState<{
     repo: string
     target: DiffTarget
+    view: View
     attempt: number
     patch: string | null
+    contents: string | null
     binary: boolean
     error: string | null
   } | null>(null)
-  const current = state?.repo === repo && state.target === target && state.attempt === attempt
+  const current =
+    state?.repo === repo &&
+    state.target === target &&
+    state.view === view &&
+    state.attempt === attempt
   const patch = current ? state.patch : null
   const binary = current ? state.binary : false
   const error = current ? state.error : null
-  useErrorToast(error, `Could not load diff for ${target.file.path}`, retry)
+  useErrorToast(error, `Could not load ${view === 'diff' ? 'diff for' : 'file'} ${filePath}`, retry)
   const [wrap, setWrap] = useState(false)
   const { resolved, isLight } = useTheme()
 
   useEffect(() => {
     let cancelled = false
-    api
-      .fileDiff({
-        repo,
-        path: target.file.path,
-        oldPath: target.file.oldPath,
-        from: target.from,
-        to: target.to,
-        untracked: target.file.status === '?',
-      })
+    const request =
+      view === 'diff'
+        ? api
+            .fileDiff({
+              repo,
+              path: target.file.path,
+              oldPath: target.file.oldPath,
+              from: target.from,
+              to: target.to,
+              untracked: target.file.status === '?',
+            })
+            .then((r) => ({ patch: r.patch, binary: r.binary, contents: null }))
+        : api
+            .fileContent(repo, revision, filePath)
+            .then((r) => ({ patch: null, binary: false, contents: r.contents }))
+    void request
       .then((r) => {
         if (cancelled) return
-        setState({ repo, target, attempt, patch: r.patch, binary: r.binary, error: null })
+        setState({ repo, target, view, attempt, ...r, error: null })
       })
       .catch((e: Error) => {
         if (!cancelled)
-          setState({ repo, target, attempt, patch: null, binary: false, error: e.message })
+          setState({
+            repo,
+            target,
+            view,
+            attempt,
+            patch: null,
+            contents: null,
+            binary: false,
+            error: e.message,
+          })
       })
     return () => {
       cancelled = true
     }
-  }, [repo, target, attempt])
+  }, [repo, target, view, revision, filePath, attempt])
 
   useEffect(() => {
     const onKey = (e: KeyboardEvent) => {
@@ -116,30 +182,100 @@ export function DiffViewer({ repo, target, diffStyle, onDiffStyleChange, onClose
     [diffStyle, wrap, repo, target, resolved, isLight],
   )
 
+  const fileOptions = useMemo<FileOptions<undefined, undefined>>(
+    () => ({
+      theme: shikiThemeFor(resolved),
+      themeType: isLight ? 'light' : 'dark',
+      overflow: wrap ? 'wrap' : 'scroll',
+      disableFileHeader: true,
+    }),
+    [resolved, isLight, wrap],
+  )
+
   const f = target.file
   return (
-    <div className="absolute inset-0 z-40 flex flex-col bg-bg">
+    <div
+      className="absolute inset-0 z-40 flex flex-col bg-bg"
+      onKeyDownCapture={(e) => {
+        if (e.key === 'Escape' && menu) {
+          e.preventDefault()
+          e.stopPropagation()
+          setMenu(null)
+        }
+      }}
+    >
       <div className="flex items-center gap-3 px-3 h-9 border-b border-border bg-bg-2 shrink-0">
         <span className={`text-xs px-1.5 rounded ${statusClass(f.status)}`}>
           {STATUS_LABEL[f.status] ?? f.status}
         </span>
-        <span className="mono truncate">
-          {f.oldPath && f.oldPath !== f.path ? (
-            <>
-              <span className="text-fg-muted">{f.oldPath}</span> → {f.path}
-            </>
-          ) : (
-            f.path
-          )}
+        <button
+          type="button"
+          className="min-w-0 flex items-center gap-1 rounded px-1 h-[26px] hover:bg-bg-4"
+          title={filePath}
+          aria-label={`Switch file (${filePath})`}
+          aria-expanded={!!menu}
+          onMouseDown={(e) => e.stopPropagation()}
+          onClick={(e) => {
+            const rect = e.currentTarget.getBoundingClientRect()
+            setMenu(
+              menu
+                ? null
+                : {
+                    x: rect.left,
+                    y: rect.bottom,
+                    searchPlaceholder: 'Search files',
+                    items: siblings.map((item) => ({
+                      label: item.file.path,
+                      hint: item.file.status,
+                      icon: item.file.path === target.file.path ? <IconCheck /> : undefined,
+                      onClick: () => selectFile(item.file),
+                    })),
+                  },
+            )
+          }}
+        >
+          <span className="mono truncate">
+            {view === 'diff' && f.oldPath && f.oldPath !== f.path ? (
+              <>
+                <span className="text-fg-muted">{f.oldPath}</span> → {f.path}
+              </>
+            ) : (
+              filePath
+            )}
+          </span>
+          <IconChevronDown className="w-3.5 h-3.5 shrink-0 opacity-70" />
+        </button>
+        <span
+          className="text-fg-dim text-xs truncate"
+          title={view === 'diff' ? target.label : revision}
+        >
+          {view === 'diff' ? target.label : revision}
         </span>
-        <span className="text-fg-dim text-xs truncate">{target.label}</span>
         <span className="flex-1" />
-        {f.additions !== null && (
+        {view === 'diff' && f.additions !== null && (
           <span className="text-xs">
             <span className="text-success">+{f.additions}</span>{' '}
             <span className="text-danger">−{f.deletions}</span>
           </span>
         )}
+        <select
+          aria-label="File view"
+          className="shrink-0"
+          value={view}
+          onChange={(e) => setViewState({ target, view: e.target.value as View })}
+        >
+          <option value="diff">Diff</option>
+          <option
+            value="before"
+            disabled={target.from === 'EMPTY' || f.status === 'A' || f.status === '?'}
+          >
+            File before change
+          </option>
+          <option value="after" disabled={f.status === 'D'}>
+            File at this revision
+          </option>
+          <option value="working">Working file</option>
+        </select>
         <button
           type="button"
           className={`icon-btn ${wrap ? 'bg-bg-4' : ''}`}
@@ -148,48 +284,104 @@ export function DiffViewer({ repo, target, diffStyle, onDiffStyleChange, onClose
         >
           <IconWrapText className="w-4 h-4" />
         </button>
+        {view === 'diff' && (
+          <>
+            <button
+              type="button"
+              className={`icon-btn ${diffStyle === 'unified' ? 'bg-bg-4' : ''}`}
+              title="Unified view"
+              onClick={() => onDiffStyleChange('unified')}
+            >
+              <IconRows3 className="w-4 h-4" />
+            </button>
+            <button
+              type="button"
+              className={`icon-btn ${diffStyle === 'split' ? 'bg-bg-4' : ''}`}
+              title="Split view"
+              onClick={() => onDiffStyleChange('split')}
+            >
+              <IconColumns2 className="w-4 h-4" />
+            </button>
+          </>
+        )}
         <button
           type="button"
-          className={`icon-btn ${diffStyle === 'unified' ? 'bg-bg-4' : ''}`}
-          title="Unified view"
-          onClick={() => onDiffStyleChange('unified')}
+          className={`icon-btn ${sidebarOpen ? 'bg-bg-4' : ''}`}
+          title={sidebarOpen ? 'Hide files sidebar' : 'Show files sidebar'}
+          aria-label="Toggle files sidebar"
+          aria-expanded={sidebarOpen}
+          onClick={() => setSidebarOpen((open) => !open)}
         >
-          <IconRows3 className="w-4 h-4" />
-        </button>
-        <button
-          type="button"
-          className={`icon-btn ${diffStyle === 'split' ? 'bg-bg-4' : ''}`}
-          title="Split view"
-          onClick={() => onDiffStyleChange('split')}
-        >
-          <IconColumns2 className="w-4 h-4" />
+          <IconPanelRight className="w-4 h-4" />
         </button>
         <button type="button" className="icon-btn" title="Close (Esc)" onClick={onClose}>
           <IconX className="w-4 h-4" />
         </button>
       </div>
-      <div className="flex-1 min-h-0 overflow-auto">
-        {!error && patch === null && (
-          <div className="p-4 text-fg-muted flex items-center gap-2">
-            <IconLoader className="animate-spin" /> Loading diff…
-          </div>
-        )}
-        {patch !== null && binary && (
-          <div className="p-4 text-fg-muted">Binary file — no textual diff available.</div>
-        )}
-        {patch !== null && !binary && patch.trim() === '' && (
-          <div className="p-4 text-fg-muted">
-            No textual changes (mode change or identical content).
-          </div>
-        )}
-        {patch !== null && !binary && patch.trim() !== '' && (
-          <PatchDiff
-            key={`${target.from}:${target.to}:${f.path}:${diffStyle}`}
-            patch={patch}
-            options={options}
-          />
+      <div className="flex flex-1 min-h-0">
+        <div
+          key={`${target.from}:${target.to}:${filePath}:${view}`}
+          className="flex-1 min-w-0 overflow-auto"
+        >
+          {!current && (
+            <div className="p-4 text-fg-muted flex items-center gap-2">
+              <IconLoader className="animate-spin" />{' '}
+              {view === 'diff' ? 'Loading diff…' : 'Loading file…'}
+            </div>
+          )}
+          {view !== 'diff' &&
+            current &&
+            !error &&
+            (state.contents === null ? (
+              <div className="p-4 text-fg-muted">
+                File contents are not available (binary or missing).
+              </div>
+            ) : state.contents === '' ? (
+              <div className="p-4 text-fg-muted">Empty file.</div>
+            ) : (
+              <File
+                key={`${revision}:${filePath}`}
+                file={{ name: filePath, contents: state.contents }}
+                options={fileOptions}
+              />
+            ))}
+          {patch !== null && binary && (
+            <div className="p-4 text-fg-muted">Binary file — no textual diff available.</div>
+          )}
+          {patch !== null && !binary && patch.trim() === '' && (
+            <div className="p-4 text-fg-muted">
+              No textual changes (mode change or identical content).
+            </div>
+          )}
+          {patch !== null && !binary && patch.trim() !== '' && (
+            <PatchDiff
+              key={`${target.from}:${target.to}:${f.path}:${diffStyle}`}
+              patch={patch}
+              options={options}
+            />
+          )}
+        </div>
+        {sidebarOpen && (
+          <aside
+            aria-label="Files in current change"
+            className="w-[320px] max-w-[45%] shrink-0 flex flex-col border-l border-border bg-bg-2"
+          >
+            <div className="section-header !border-t-0">
+              <span>Changed files</span>
+              <span className="badge">{files.length}</span>
+            </div>
+            <div className="flex-1 min-h-0 p-1">
+              <ChangedFilesTree
+                files={files}
+                onOpenFile={selectFile}
+                selectedPath={target.file.path}
+                fillHeight
+              />
+            </div>
+          </aside>
         )}
       </div>
+      <ContextMenu menu={menu} onClose={() => setMenu(null)} />
     </div>
   )
 }

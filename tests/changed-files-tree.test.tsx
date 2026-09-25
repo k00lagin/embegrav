@@ -4,6 +4,7 @@ import { afterEach, beforeEach, expect, it, vi } from 'vitest'
 import { ChangedFilesTree } from '@/components/ChangedFilesTree'
 import { ThemeProvider, useTheme } from '@/theme/ThemeProvider'
 import type { ChangedFile } from '@shared/types'
+import { createFileMenu } from '@/components/fileMenu'
 
 beforeEach(() => {
   localStorage.clear()
@@ -27,6 +28,37 @@ beforeEach(() => {
 afterEach(() => {
   cleanup()
   vi.unstubAllGlobals()
+})
+
+it('opens a file context menu without opening the diff on right click', async () => {
+  const open = vi.fn()
+  const file: ChangedFile = { path: 'file.txt', status: 'M', additions: 1, deletions: 0 }
+  const target = { file, from: 'parent', to: 'commit', label: 'Change' }
+  const { container } = render(
+    <ThemeProvider>
+      <ChangedFilesTree
+        files={[file]}
+        onOpenFile={() => open(target)}
+        menuFor={createFileMenu(
+          'R',
+          () => target,
+          open,
+          async () => {},
+        )}
+      />
+    </ThemeProvider>,
+  )
+  await waitFor(() =>
+    expect(treeRoot(container).querySelector('[data-item-path="file.txt"]')).toBeTruthy(),
+  )
+  fireEvent.contextMenu(treeRoot(container).querySelector('[data-item-path="file.txt"]')!, {
+    clientX: 50,
+    clientY: 50,
+  })
+  const view = await screen.findByRole('button', { name: 'View File at this Revision' })
+  expect(open).not.toHaveBeenCalled()
+  fireEvent.click(view)
+  expect(open).toHaveBeenCalledWith({ ...target, view: 'after' })
 })
 
 function ThemeSwitch() {
