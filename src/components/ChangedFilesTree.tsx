@@ -211,6 +211,28 @@ export function ChangedFilesTree({
     <div
       ref={wrapRef}
       className={`relative${fillHeight ? ' h-full' : ''}`}
+      onClickCapture={(e) => {
+        const path = e.nativeEvent.composedPath()
+        if (
+          !path.includes(e.currentTarget) ||
+          path.some(
+            (node) =>
+              node instanceof HTMLElement &&
+              node.matches(
+                '[data-type="item"], .tree-row-actions, [data-file-tree-context-menu-root], button, input',
+              ),
+          )
+        )
+          return
+        // Clear the model selection without opening another file while deselecting multiple rows.
+        syncingSelection.current = true
+        try {
+          for (const selected of model.getSelectedPaths()) model.getItem(selected)?.deselect()
+        } finally {
+          syncingSelection.current = false
+        }
+        setHover(null)
+      }}
       onMouseMove={trackHover}
       onMouseLeave={() => setHover(null)}
       onWheel={() => setHover(null)}
