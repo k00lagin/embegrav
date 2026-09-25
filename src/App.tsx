@@ -37,6 +37,7 @@ import IconArrowUp from '~icons/lucide/arrow-up'
 import IconArrowDown from '~icons/lucide/arrow-down'
 import IconX from '~icons/lucide/x'
 import IconCheck from '~icons/lucide/check'
+import IconArchive from '~icons/lucide/archive'
 
 const DEFAULT_SPLIT_WIDTH = 520
 
@@ -67,6 +68,7 @@ function Main() {
   const [compareState, setCompare] = useState<string | null>(null)
   const [diffState, setDiff] = useState<DiffTarget | null>(null)
   const [extraCommits, setExtraCommits] = useState(0)
+  const pendingStash = useRef<{ hash: string; version: number; loadedCount: number } | null>(null)
   const [branches, setBranchesState] = useState<string[] | null>(null)
   const selectRepo = useCallback((path: string | null) => {
     activeRepo.current = path
@@ -88,6 +90,7 @@ function Main() {
     setCompare(null)
     setDiff(null)
     setExtraCommits(0)
+    pendingStash.current = null
   }, [])
   useEffect(() => {
     api
@@ -259,7 +262,49 @@ function Main() {
     setSelected(hash)
   }
 
+  const goToStash = (hash: string) => {
+    if (rowExists(hash)) {
+      pendingStash.current = null
+      openDetails(hash)
+      focusRow(hash)
+    } else {
+      pendingStash.current = { hash, version, loadedCount: data?.commits.length ?? 0 }
+      setExtraCommits((count) => count * 2 + settings.maxCommits)
+    }
+  }
+
+  // A stash can be older than the loaded history. Keep loading pages until its row is present.
+  useEffect(() => {
+    const pending = pendingStash.current
+    if (!pending || loading) return
+    if (error) {
+      pendingStash.current = null
+      return
+    }
+    if (!data || version <= pending.version) return
+    if (data.commits.some((commit) => commit.hash === pending.hash)) {
+      pendingStash.current = null
+      focusPending.current = true
+      // oxlint-disable-next-line react/set-state-in-effect -- complete navigation after loading the target row
+      setFocused(pending.hash)
+      setSelected(pending.hash)
+      setCompare(null)
+      setDiff(null)
+    } else if (!data.stashes.some((stash) => stash.hash === pending.hash)) {
+      pendingStash.current = null
+      toast.show('info', 'Stash is no longer available')
+    } else if (data.moreAvailable && data.commits.length > pending.loadedCount) {
+      pending.version = version
+      pending.loadedCount = data.commits.length
+      setExtraCommits((count) => count * 2 + settings.maxCommits)
+    } else {
+      pendingStash.current = null
+      toast.show('info', 'Could not find stash in the loaded history')
+    }
+  }, [data, loading, error, version, settings.maxCommits, toast])
+
   const onSelect = (hash: string, e: MouseEvent) => {
+    pendingStash.current = null
     setFocused(hash)
     if (e.ctrlKey || e.metaKey) {
       if (!selected || selected === hash) {
@@ -773,6 +818,8 @@ function Main() {
       </div>
 
       <div
+        role="group"
+        aria-label="Repository status"
         className="flex items-center gap-3 px-3 h-6 text-xs border-t border-border shrink-0"
         style={{
           background: 'var(--vscode-statusBar-background)',
@@ -781,18 +828,67 @@ function Main() {
       >
         {data && (
           <>
-            <span className="flex items-center gap-1" title="Current branch">
+            <button
+              type="button"
+              className="status-bar-button max-w-[240px]"
+              title="Switch branch"
+              aria-label={`Switch branch (${data.currentBranch ?? 'detached HEAD'})`}
+              disabled={loading || !!inProgress || !data.refs.some((ref) => ref.type === 'head')}
+              onClick={(e) => {
+                const rect = e.currentTarget.getBoundingClientRect()
+                setMenu({
+                  x: rect.left,
+                  y: rect.top,
+                  placement: 'above',
+                  searchPlaceholder: 'Search branches',
+                  items: data.refs
+                    .filter((ref) => ref.type === 'head')
+                    .sort((a, b) => a.name.localeCompare(b.name))
+                    .map((ref) => ({
+                      label: ref.name,
+                      icon: ref.name === data.currentBranch ? <IconCheck /> : <IconGitBranch />,
+                      disabled: ref.name === data.currentBranch,
+                      onClick: () =>
+                        void actions.run(`Checkout ${ref.name}`, 'checkoutBranch', {
+                          name: ref.name,
+                        }),
+                    })),
+                })
+              }}
+            >
               <IconGitBranch className="w-3 h-3" />
-              {data.currentBranch ??
-                (data.head ? `HEAD detached at ${shortHash(data.head)}` : 'no commits yet')}
-            </span>
+              <span className="truncate">
+                {data.currentBranch ??
+                  (data.head ? `HEAD detached at ${shortHash(data.head)}` : 'no commits yet')}
+              </span>
+            </button>
             {data.upstream && (
-              <span className="flex items-center gap-1" title={`Upstream: ${data.upstream.name}`}>
-                {data.upstream.name}
-                <IconArrowUp className="w-3 h-3" />
-                {data.upstream.ahead}
-                <IconArrowDown className="w-3 h-3" />
-                {data.upstream.behind}
+              <span className="flex items-center gap-1 self-stretch">
+                <span className="self-center" title={`Upstream: ${data.upstream.name}`}>
+                  {data.upstream.name}
+                </span>
+                <button
+                  type="button"
+                  className="status-bar-button"
+                  title={`Push to ${data.upstream.name}`}
+                  aria-label={`Push to ${data.upstream.name} (${data.upstream.ahead} ahead)`}
+                  disabled={!data.currentBranch || data.remotes.length === 0}
+                  onClick={() => void actions.push()}
+                >
+                  <IconArrowUp className="w-3 h-3" />
+                  {data.upstream.ahead}
+                </button>
+                <button
+                  type="button"
+                  className="status-bar-button"
+                  title={`Pull from ${data.upstream.name}`}
+                  aria-label={`Pull from ${data.upstream.name} (${data.upstream.behind} behind)`}
+                  disabled={data.remotes.length === 0}
+                  onClick={() => void actions.pull()}
+                >
+                  <IconArrowDown className="w-3 h-3" />
+                  {data.upstream.behind}
+                </button>
               </span>
             )}
             <span>
@@ -803,7 +899,28 @@ function Main() {
               <span>{pluralize(data.uncommitted.length, 'uncommitted change')}</span>
             )}
             {data.stashes.length > 0 && (
-              <span>{pluralize(data.stashes.length, 'stash', 'stashes')}</span>
+              <button
+                type="button"
+                className="status-bar-button"
+                title="Go to stash"
+                disabled={loading}
+                onClick={(e) => {
+                  const rect = e.currentTarget.getBoundingClientRect()
+                  setMenu({
+                    x: rect.left,
+                    y: rect.top,
+                    placement: 'above',
+                    searchPlaceholder: 'Search stashes',
+                    items: data.stashes.map((stash) => ({
+                      label: `${stash.selector}: ${stash.message}`,
+                      icon: <IconArchive />,
+                      onClick: () => goToStash(stash.hash),
+                    })),
+                  })
+                }}
+              >
+                {pluralize(data.stashes.length, 'stash', 'stashes')}
+              </button>
             )}
           </>
         )}

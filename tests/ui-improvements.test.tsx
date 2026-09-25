@@ -83,6 +83,172 @@ afterEach(() => {
 
 const row = (hash: string) => document.getElementById(`commit-${hash}`)!
 
+const stashes = [B, C].map((hash, index) => ({
+  selector: `stash@{${index}}`,
+  index,
+  hash,
+  baseHash: A,
+  message: index === 0 ? 'WIP: Search dialog' : 'On main: Old layout',
+  date: 1_700_000_000 - index,
+}))
+const stashGraph: GraphData = {
+  ...graph,
+  stashes,
+  commits: graph.commits.map((c) => ({ ...c, stash: stashes.find((s) => s.hash === c.hash) })),
+}
+
+it('filters status branches, handles no matches and resets the search when reopened', async () => {
+  render(<App />)
+  const button = await screen.findByRole('button', { name: 'Switch branch (main)' })
+  fireEvent.click(button)
+  const input = screen.getByRole('textbox', { name: 'Search branches' })
+  expect(document.activeElement).toBe(input)
+  fireEvent.change(input, { target: { value: 'missing' } })
+  expect(screen.getByText('No results')).toBeTruthy()
+  expect(screen.queryByRole('button', { name: 'main' })).toBeNull()
+  fireEvent.keyDown(input, { key: 'Enter' })
+  expect(api.action).not.toHaveBeenCalled()
+  fireEvent.keyDown(input, { key: 'Escape' })
+  fireEvent.click(button)
+  const reopened = screen.getByRole('textbox', { name: 'Search branches' })
+  expect(reopened).toHaveProperty('value', '')
+  fireEvent.change(reopened, { target: { value: ' SEARCH ' } })
+  expect(screen.queryByRole('button', { name: 'main' })).toBeNull()
+  fireEvent.keyDown(reopened, { key: 'Enter' })
+  await waitFor(() =>
+    expect(api.action).toHaveBeenCalledWith('R', 'checkoutBranch', { name: 'feature/search' }),
+  )
+})
+
+it('filters stashes by message and selector and navigates to their rows without applying them', async () => {
+  vi.mocked(api.graph).mockResolvedValue(stashGraph)
+  const scroll = vi.spyOn(Element.prototype, 'scrollIntoView')
+  render(<App />)
+  const button = await screen.findByRole('button', { name: '2 stashes' })
+  fireEvent.click(button)
+  const input = screen.getByRole('textbox', { name: 'Search stashes' })
+  expect(document.activeElement).toBe(input)
+  fireEvent.change(input, { target: { value: ' SEARCH ' } })
+  expect(screen.queryByRole('button', { name: 'stash@{1}: On main: Old layout' })).toBeNull()
+  fireEvent.click(screen.getByRole('button', { name: 'stash@{0}: WIP: Search dialog' }))
+  await waitFor(() => expect(document.activeElement).toBe(row(B)))
+  expect(row(B).getAttribute('aria-selected')).toBe('true')
+  expect(scroll).toHaveBeenCalledWith({ block: 'nearest' })
+  expect(screen.queryByRole('textbox', { name: 'Search stashes' })).toBeNull()
+  fireEvent.click(button)
+  const reopened = screen.getByRole('textbox', { name: 'Search stashes' })
+  expect(reopened).toHaveProperty('value', '')
+  fireEvent.change(reopened, { target: { value: 'stash@{1}' } })
+  expect(screen.queryByRole('button', { name: 'stash@{0}: WIP: Search dialog' })).toBeNull()
+  fireEvent.keyDown(reopened, { key: 'Enter' })
+  await waitFor(() => expect(document.activeElement).toBe(row(C)))
+  expect(row(C).getAttribute('aria-selected')).toBe('true')
+  expect(api.action).not.toHaveBeenCalled()
+})
+
+it('loads more history until the stash selected in the status menu is visible', async () => {
+  vi.mocked(api.graph)
+    .mockResolvedValueOnce({
+      ...stashGraph,
+      commits: stashGraph.commits.slice(0, 1),
+      moreAvailable: true,
+    })
+    .mockResolvedValueOnce({
+      ...stashGraph,
+      commits: stashGraph.commits.slice(0, 2),
+      moreAvailable: true,
+    })
+    .mockResolvedValue(stashGraph)
+  render(<App />)
+  fireEvent.click(await screen.findByRole('button', { name: '2 stashes' }))
+  fireEvent.click(screen.getByRole('button', { name: 'stash@{1}: On main: Old layout' }))
+  await waitFor(() => expect(document.activeElement).toBe(row(C)))
+  expect(row(C).getAttribute('aria-selected')).toBe('true')
+  expect(api.graph).toHaveBeenCalledTimes(3)
+  expect(vi.mocked(api.graph).mock.calls.map(([request]) => request.maxCommits)).toEqual([
+    DEFAULT_SETTINGS.maxCommits,
+    DEFAULT_SETTINGS.maxCommits * 2,
+    DEFAULT_SETTINGS.maxCommits * 4,
+  ])
+})
+
+it('stops loading a stash when the repository request fails', async () => {
+  vi.mocked(api.graph)
+    .mockResolvedValueOnce({ ...stashGraph, commits: [], moreAvailable: true })
+    .mockRejectedValue(new Error('History unavailable'))
+  render(<App />)
+  fireEvent.click(await screen.findByRole('button', { name: '2 stashes' }))
+  fireEvent.click(screen.getByRole('button', { name: 'stash@{1}: On main: Old layout' }))
+  expect((await screen.findByRole('alert')).textContent).toContain('History unavailable')
+  expect(api.graph).toHaveBeenCalledTimes(2)
+})
+
+it('stops loading history when the server returns no additional commits', async () => {
+  vi.mocked(api.graph).mockResolvedValue({
+    ...stashGraph,
+    commits: [graph.commits[0]],
+    moreAvailable: true,
+  })
+  render(<App />)
+  fireEvent.click(await screen.findByRole('button', { name: '2 stashes' }))
+  fireEvent.click(screen.getByRole('button', { name: 'stash@{1}: On main: Old layout' }))
+  expect(await screen.findByText('Could not find stash in the loaded history')).toBeTruthy()
+  expect(api.graph).toHaveBeenCalledTimes(2)
+})
+
+it('switches local branches from the status bar and refreshes the repository', async () => {
+  render(<App />)
+  const status = screen.getByRole('group', { name: 'Repository status' })
+  fireEvent.click(await within(status).findByRole('button', { name: 'Switch branch (main)' }))
+  expect(screen.getByRole('button', { name: 'main' })).toHaveProperty('disabled', true)
+  expect(screen.queryByRole('button', { name: 'origin/main' })).toBeNull()
+  fireEvent.click(screen.getByRole('button', { name: 'feature/search' }))
+  await waitFor(() =>
+    expect(api.action).toHaveBeenCalledWith('R', 'checkoutBranch', { name: 'feature/search' }),
+  )
+  await waitFor(() => expect(api.graph).toHaveBeenCalledTimes(2))
+  expect(screen.queryByRole('button', { name: 'feature/search' })).toBeNull()
+})
+
+it('allows branch switching from detached HEAD but disables it during a merge', async () => {
+  vi.mocked(api.graph).mockResolvedValue({ ...graph, currentBranch: null, upstream: null })
+  render(<App />)
+  fireEvent.click(await screen.findByRole('button', { name: 'Switch branch (detached HEAD)' }))
+  expect(screen.getByRole('button', { name: 'main' })).toHaveProperty('disabled', false)
+  fireEvent.keyDown(window, { key: 'Escape' })
+  expect(screen.queryByRole('button', { name: 'main' })).toBeNull()
+  vi.mocked(api.graph).mockResolvedValue({
+    ...graph,
+    state: { ...graph.state, mergeInProgress: true },
+  })
+  fireEvent.click(screen.getByRole('button', { name: 'Refresh (F5)' }))
+  expect(await screen.findByRole('button', { name: 'Switch branch (main)' })).toHaveProperty(
+    'disabled',
+    true,
+  )
+  expect(api.action).not.toHaveBeenCalled()
+})
+
+it('runs push and pull from the status counters through the existing actions', async () => {
+  vi.mocked(api.graph).mockResolvedValue({
+    ...graph,
+    upstream: { name: 'origin/main', ahead: 2, behind: 3 },
+  })
+  render(<App />)
+  const status = screen.getByRole('group', { name: 'Repository status' })
+  fireEvent.click(
+    await within(status).findByRole('button', { name: 'Push to origin/main (2 ahead)' }),
+  )
+  await waitFor(() =>
+    expect(api.action).toHaveBeenCalledWith('R', 'push', { remote: 'origin', branch: 'main' }),
+  )
+  await screen.findByText('Push main to origin/main')
+  vi.mocked(api.action).mockRejectedValueOnce(new Error('Network unavailable'))
+  fireEvent.click(within(status).getByRole('button', { name: 'Pull from origin/main (3 behind)' }))
+  await waitFor(() => expect(api.action).toHaveBeenCalledWith('R', 'pull', {}))
+  expect((await screen.findByRole('alert')).textContent).toContain('Network unavailable')
+})
+
 it('uses a graph icon only while the header text does not fit, including after font changes', async () => {
   let available = 20
   let textWidth = 35
@@ -167,7 +333,10 @@ it('keeps split details open on repeated row clicks until the close button is cl
 })
 
 it('navigates rows with the keyboard, opens details, compares, and jumps to HEAD', async () => {
-  render(<App />)
+  // Flush the initial graph/stat effects before dispatching keyboard navigation.
+  await act(async () => {
+    render(<App />)
+  })
   await screen.findByText('Fix typo')
   row(A).focus()
   fireEvent.keyDown(row(A), { key: 'ArrowDown' })

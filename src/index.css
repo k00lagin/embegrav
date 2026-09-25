@@ -245,6 +245,24 @@ input[type='radio'] {
   background: var(--vscode-toolbar-hoverBackground);
 }
 
+.status-bar-button {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  height: 100%;
+  padding: 0 4px;
+  color: inherit;
+  background: transparent;
+  border: none;
+}
+.status-bar-button:hover:not(:disabled) {
+  background: var(--vscode-statusBarItem-hoverBackground, var(--vscode-toolbar-hoverBackground));
+}
+.status-bar-button:focus-visible {
+  outline: 1px solid var(--vscode-focusBorder);
+  outline-offset: -1px;
+}
+
 /* Commit table */
 .commit-table {
   border-collapse: collapse;
@@ -396,6 +414,14 @@ input[type='radio'] {
   padding: 4px 0;
   max-height: calc(100vh - 20px);
   overflow-y: auto;
+}
+.context-menu-searchable {
+  display: flex;
+  flex-direction: column;
+  width: min(420px, calc(100vw - 16px));
+  min-width: 0;
+  max-height: 60vh;
+  overflow: hidden;
 }
 .context-menu-item {
   display: flex;
