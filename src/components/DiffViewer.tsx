@@ -4,7 +4,6 @@ import type { ChangedFile } from '@shared/types'
 import { api } from '@/api'
 import { useTheme } from '@/theme/ThemeProvider'
 import { shikiThemeFor } from '@/theme/vscode'
-import { useErrorToast } from '@/hooks/useErrorToast'
 import { ChangedFilesTree } from './ChangedFilesTree'
 import { ContextMenu, type ContextMenuState } from './ContextMenu'
 import { withWorkingFile } from './fileMenu'
@@ -16,6 +15,8 @@ import IconColumns2 from '~icons/lucide/columns-2'
 import IconRows3 from '~icons/lucide/rows-3'
 import IconWrapText from '~icons/lucide/wrap-text'
 import IconLoader from '~icons/lucide/loader-circle'
+import IconCircleAlert from '~icons/lucide/circle-alert'
+import IconRotateCw from '~icons/lucide/rotate-cw'
 
 export interface DiffTarget {
   file: ChangedFile
@@ -105,7 +106,6 @@ export function DiffViewer({
   const patch = current ? state.patch : null
   const binary = current ? state.binary : false
   const error = current ? state.error : null
-  useErrorToast(error, `Could not load ${view === 'diff' ? 'diff for' : 'file'} ${filePath}`, retry)
   const [wrap, setWrap] = useState(false)
   const { resolved, isLight } = useTheme()
 
@@ -323,6 +323,7 @@ export function DiffViewer({
         <div
           key={`${target.from}:${target.to}:${filePath}:${view}`}
           className="flex-1 min-w-0 overflow-auto"
+          aria-busy={!current}
         >
           {!current && (
             <div className="p-4 text-fg-muted flex items-center gap-2">
@@ -330,9 +331,40 @@ export function DiffViewer({
               {view === 'diff' ? 'Loading diff…' : 'Loading file…'}
             </div>
           )}
+          {error !== null && (
+            <div role="alert" className="w-full max-w-[540px] mx-auto my-12 px-6">
+              <h2 className="flex items-center gap-2 text-base font-semibold">
+                <IconCircleAlert className="w-5 h-5 shrink-0 text-danger" aria-hidden="true" />
+                Could not load {view === 'diff' ? 'diff' : 'file'}
+              </h2>
+              <p className="ml-7 mt-3 mb-4 text-fg-muted leading-relaxed">
+                The {view === 'diff' ? 'diff' : 'file'} could not be retrieved. Try loading it
+                again.
+              </p>
+              <div className="ml-7">
+                <button type="button" className="btn" onClick={retry}>
+                  <IconRotateCw className="w-4 h-4" aria-hidden="true" />
+                  Retry
+                </button>
+                <details className="mt-5 pt-3 border-t border-border">
+                  <summary className="w-fit cursor-pointer text-fg-muted hover:text-fg">
+                    Technical details
+                  </summary>
+                  <pre className="mono mt-3 p-3 text-xs leading-relaxed whitespace-pre-wrap break-words bg-bg-2 border border-border rounded-sm">
+                    {error}
+                    {'\n\n'}File: {filePath}
+                    {'\n'}
+                    {view === 'diff'
+                      ? `Comparison: ${target.from} → ${target.to}`
+                      : `Revision: ${revision}`}
+                  </pre>
+                </details>
+              </div>
+            </div>
+          )}
           {view !== 'diff' &&
             current &&
-            !error &&
+            error === null &&
             (state.contents === null ? (
               <div className="p-4 text-fg-muted">
                 File contents are not available (binary or missing).

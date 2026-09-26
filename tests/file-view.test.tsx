@@ -203,13 +203,17 @@ it('ignores a file response arriving after switching to another revision', async
   expect(screen.getByTestId('full-file').textContent).toContain('commit: src/new.ts')
 })
 
-it('retries full-file errors using a toast and handles empty and unavailable contents', async () => {
+it('retries full-file errors in the panel and handles empty and unavailable contents', async () => {
   vi.mocked(api.fileContent)
     .mockRejectedValueOnce(new Error('Offline'))
     .mockResolvedValueOnce({ contents: '' })
     .mockResolvedValue({ contents: null })
   render(<View value={{ ...target, view: 'after' }} />)
-  expect((await screen.findByRole('alert')).textContent).toContain('Could not load file src/new.ts')
+  const alert = await screen.findByRole('alert')
+  expect(alert.textContent).toContain('Could not load file')
+  expect(alert.textContent).toContain('File: src/new.ts')
+  expect(alert.textContent).toContain('Revision: commit')
+  expect(alert.closest('[aria-busy]')).not.toBeNull()
   expect(screen.queryByText('Loading file…')).toBeNull()
   fireEvent.click(screen.getByRole('button', { name: 'Retry' }))
   await screen.findByText('Empty file.')
