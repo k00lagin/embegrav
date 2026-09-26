@@ -70,6 +70,66 @@ const wrapper = ({ children }: { children: ReactNode }) => (
   </ToastProvider>
 )
 
+it('rejects duplicate operations synchronously and keeps pending state per repository', async () => {
+  const a = deferred<{ ok: true; output: string }>()
+  const b = deferred<{ ok: true; output: string }>()
+  vi.spyOn(api, 'action').mockReturnValueOnce(a.promise).mockReturnValueOnce(b.promise)
+  const refresh = vi.fn()
+  const { result, rerender } = renderHook(
+    ({ repo }) => useRepoActions(repo, null, refresh, DEFAULT_SETTINGS),
+    { initialProps: { repo: 'A' }, wrapper },
+  )
+  let first!: Promise<boolean>
+  let duplicate!: Promise<boolean>
+  act(() => {
+    first = result.current.run('Fetch', 'fetch', {})
+    duplicate = result.current.run('Fetch', 'fetch', {})
+  })
+  expect(api.action).toHaveBeenCalledTimes(1)
+  await expect(duplicate).resolves.toBe(false)
+  expect(result.current.isRunning('fetch')).toBe(true)
+  rerender({ repo: 'B' })
+  expect(result.current.isRunning('fetch')).toBe(false)
+  let second!: Promise<boolean>
+  act(() => {
+    second = result.current.run('Fetch', 'fetch', {})
+  })
+  rerender({ repo: 'A' })
+  expect(result.current.isRunning('fetch')).toBe(true)
+  await act(async () => {
+    a.reject(new Error('Fetch failed'))
+    await first
+  })
+  expect(result.current.isRunning('fetch')).toBe(false)
+  rerender({ repo: 'B' })
+  expect(result.current.isRunning('fetch')).toBe(true)
+  await act(async () => {
+    b.resolve({ ok: true, output: '' })
+    await second
+  })
+  expect(result.current.isRunning('fetch')).toBe(false)
+})
+
+it('does not drop file actions for different paths while another file action is pending', async () => {
+  const response = deferred<{ ok: true; output: string }>()
+  vi.spyOn(api, 'action').mockReturnValue(response.promise)
+  const { result } = renderHook(() => useRepoActions('A', null, vi.fn(), DEFAULT_SETTINGS), {
+    wrapper,
+  })
+  let first!: Promise<boolean>
+  let second!: Promise<boolean>
+  act(() => {
+    first = result.current.run('Stage a', 'stage', { paths: ['a'] })
+    second = result.current.run('Stage b', 'stage', { paths: ['b'] })
+  })
+  expect(api.action).toHaveBeenCalledTimes(2)
+  await act(async () => {
+    response.resolve({ ok: true, output: '' })
+    expect(await first).toBe(true)
+    expect(await second).toBe(true)
+  })
+})
+
 beforeEach(() => {
   vi.stubGlobal(
     'ResizeObserver',

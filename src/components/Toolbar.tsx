@@ -28,6 +28,7 @@ export interface SearchState {
   index: number
   next: () => void
   prev: () => void
+  goToCommit?: () => void
   open: boolean
   setOpen: (o: boolean) => void
 }
@@ -45,6 +46,9 @@ interface Props {
   updateSettings: (patch: Partial<Settings>) => void
   search: SearchState
   loading: boolean
+  fetching: boolean
+  pulling: boolean
+  pushing: boolean
   onRefresh: () => void
   onFetch: () => void
   /** Pull from the upstream (or ask where to pull from when there is none) */
@@ -160,6 +164,7 @@ export function Toolbar(p: Props) {
               if (e.key === 'Enter') {
                 e.preventDefault()
                 if (e.shiftKey) p.search.prev()
+                else if (p.search.goToCommit) p.search.goToCommit()
                 else p.search.next()
               } else if (e.key === 'Escape') {
                 p.search.setOpen(false)
@@ -170,7 +175,9 @@ export function Toolbar(p: Props) {
             {p.search.query
               ? p.search.count
                 ? `${p.search.index + 1} of ${p.search.count}`
-                : 'No results'
+                : p.search.goToCommit
+                  ? 'Enter to go to commit'
+                  : 'No results'
               : ''}
           </span>
           <button
@@ -185,9 +192,9 @@ export function Toolbar(p: Props) {
           <button
             type="button"
             className="icon-btn !w-5 !h-5"
-            title="Next match (Enter)"
-            disabled={!p.search.count}
-            onClick={p.search.next}
+            title={p.search.goToCommit ? 'Go to commit (Enter)' : 'Next match (Enter)'}
+            disabled={!p.search.count && !p.search.goToCommit}
+            onClick={p.search.goToCommit ?? p.search.next}
           >
             <IconChevronDown className="w-3.5 h-3.5" />
           </button>
@@ -233,16 +240,22 @@ export function Toolbar(p: Props) {
         type="button"
         className="icon-btn"
         title="Fetch from all remotes"
-        disabled={!p.data || p.data.remotes.length === 0}
+        disabled={!p.data || p.data.remotes.length === 0 || p.fetching}
+        aria-busy={p.fetching}
         onClick={p.onFetch}
       >
-        <IconCloudDownload className="w-4 h-4" />
+        {p.fetching ? (
+          <IconLoader className="w-4 h-4 animate-spin" />
+        ) : (
+          <IconCloudDownload className="w-4 h-4" />
+        )}
       </button>
       <SplitButton
         icon={<IconDownload className="w-4 h-4" />}
         title={upstream ? `Pull from ${upstream.name}` : 'Pull…'}
         optionsTitle="Pull with options (remote, branch, rebase)…"
         count={upstream?.behind}
+        busy={p.pulling}
         disabled={!p.data || p.data.remotes.length === 0}
         onClick={p.onPull}
         onOptions={p.onPullOptions}
@@ -252,6 +265,7 @@ export function Toolbar(p: Props) {
         title={upstream && p.data?.currentBranch ? `Push to ${upstream.name}` : 'Push…'}
         optionsTitle="Push with options (remote, set upstream, force with lease)…"
         count={upstream?.ahead}
+        busy={p.pushing}
         disabled={!p.data || p.data.remotes.length === 0 || !p.data.currentBranch}
         onClick={p.onPush}
         onOptions={p.onPushOptions}
@@ -426,6 +440,7 @@ function SplitButton(p: {
   title: string
   optionsTitle: string
   count?: number
+  busy: boolean
   disabled: boolean
   onClick: () => void
   onOptions: () => void
@@ -436,10 +451,11 @@ function SplitButton(p: {
         type="button"
         className="icon-btn relative !rounded-r-none"
         title={p.title}
-        disabled={p.disabled}
+        disabled={p.disabled || p.busy}
+        aria-busy={p.busy}
         onClick={p.onClick}
       >
-        {p.icon}
+        {p.busy ? <IconLoader className="w-4 h-4 animate-spin" /> : p.icon}
         {!!p.count && p.count > 0 && (
           <span className="badge absolute -top-1 -right-1 !h-4 !min-w-4 !px-1 !text-[10px]">
             {p.count}
@@ -451,7 +467,7 @@ function SplitButton(p: {
         className="icon-btn !w-3.5 !rounded-l-none"
         title={p.optionsTitle}
         aria-label={p.optionsTitle}
-        disabled={p.disabled}
+        disabled={p.disabled || p.busy}
         onClick={p.onOptions}
       >
         <IconChevronDown className="w-3 h-3 opacity-70" />

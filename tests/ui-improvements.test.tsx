@@ -83,6 +83,210 @@ afterEach(() => {
 
 const row = (hash: string) => document.getElementById(`commit-${hash}`)!
 
+it('keeps details while loading a missing parent, then selects and focuses it', async () => {
+  let finish!: (value: GraphData) => void
+  vi.mocked(api.graph)
+    .mockResolvedValueOnce({ ...graph, commits: [graph.commits[0]], moreAvailable: true })
+    .mockImplementationOnce(
+      () =>
+        new Promise((resolve) => {
+          finish = resolve
+        }),
+    )
+  render(<App />)
+  fireEvent.click(await screen.findByText('Fix typo'))
+  fireEvent.click(await screen.findByRole('button', { name: B.slice(0, 8) }))
+  expect(screen.getByText('Details of Fix typo')).toBeTruthy()
+  await waitFor(() => expect(api.graph).toHaveBeenCalledTimes(2))
+  await act(async () => finish(graph))
+  await waitFor(() => expect(document.activeElement).toBe(row(B)))
+  expect(row(B).getAttribute('aria-selected')).toBe('true')
+  expect(await screen.findByText('Details of Add search')).toBeTruthy()
+})
+
+it.each(['Fetch from all remotes', 'Pull from origin/main', 'Push to origin/main', 'Continue'])(
+  'shows pending state and prevents another %s',
+  async (title) => {
+    let finish!: (value: { ok: true; output: string }) => void
+    vi.mocked(api.graph).mockResolvedValue({
+      ...graph,
+      state: { ...graph.state, rebaseInProgress: true },
+    })
+    vi.mocked(api.action).mockImplementation(
+      () =>
+        new Promise((resolve) => {
+          finish = resolve
+        }),
+    )
+    render(<App />)
+    const button =
+      title === 'Continue'
+        ? await screen.findByRole('button', { name: title })
+        : (await screen.findAllByTitle(title))[0]
+    await waitFor(() => expect(button).toHaveProperty('disabled', false))
+    fireEvent.click(button)
+    expect(button).toHaveProperty('disabled', true)
+    expect(button.getAttribute('aria-busy')).toBe('true')
+    expect(button.querySelector('.animate-spin')).toBeTruthy()
+    if (title.startsWith('Pull') || title.startsWith('Push')) {
+      for (const other of screen.getAllByTitle(title)) {
+        expect(other).toHaveProperty('disabled', true)
+        expect(other.getAttribute('aria-busy')).toBe('true')
+      }
+      expect(
+        screen.getByTitle(
+          title.startsWith('Pull')
+            ? 'Pull with options (remote, branch, rebase)…'
+            : 'Push with options (remote, set upstream, force with lease)…',
+        ),
+      ).toHaveProperty('disabled', true)
+    }
+    fireEvent.click(button)
+    expect(api.action).toHaveBeenCalledTimes(1)
+    await act(async () => finish({ ok: true, output: '' }))
+    expect(button).toHaveProperty('disabled', false)
+  },
+)
+
+it('navigates to an unloaded hash from Find without changing the branch filter', async () => {
+  localStorage.setItem('embegrav.branches:R', JSON.stringify(['main']))
+  vi.mocked(api.graph)
+    .mockResolvedValueOnce({ ...graph, commits: [graph.commits[0]], moreAvailable: true })
+    .mockResolvedValueOnce({ ...graph, commits: graph.commits.slice(0, 2), moreAvailable: true })
+    .mockResolvedValue(graph)
+  vi.mocked(api.commit).mockImplementation(async (_repo, hash) =>
+    details(hash === C.slice(0, 8) ? C : hash),
+  )
+  render(<App />)
+  fireEvent.click(await screen.findByText('Fix typo'))
+  fireEvent.click(screen.getByTitle('Find (Ctrl+F)'))
+  const input = screen.getByPlaceholderText('Find (message, author, hash, ref)')
+  fireEvent.change(input, { target: { value: C.slice(0, 8) } })
+  fireEvent.keyDown(input, { key: 'Enter' })
+  await waitFor(() => expect(document.activeElement).toBe(row(C)))
+  expect(row(C).getAttribute('aria-selected')).toBe('true')
+  expect(api.graph).toHaveBeenCalledTimes(3)
+  for (const [request] of vi.mocked(api.graph).mock.calls)
+    expect(request.branches).toEqual(['main'])
+})
+
+it.each(['unified', 'split'] as const)(
+  'preserves %s details when a commit is excluded by the filters',
+  async (commitView) => {
+    localStorage.setItem(
+      'embegrav.settings',
+      JSON.stringify({ ...DEFAULT_SETTINGS, autoRefresh: false, commitView }),
+    )
+    localStorage.setItem('embegrav.branches:R', JSON.stringify(['main']))
+    vi.mocked(api.graph)
+      .mockResolvedValueOnce({ ...graph, commits: [graph.commits[0]], moreAvailable: true })
+      .mockResolvedValue({ ...graph, commits: [graph.commits[0]], moreAvailable: false })
+    render(<App />)
+    fireEvent.click(await screen.findByText('Fix typo'))
+    fireEvent.click(await screen.findByRole('button', { name: B.slice(0, 8) }))
+    expect(await screen.findByText('Commit is not in the current history')).toBeTruthy()
+    expect(screen.getByText('Details of Fix typo')).toBeTruthy()
+    expect(row(A).getAttribute('aria-selected')).toBe('true')
+    expect(api.graph).toHaveBeenCalledTimes(2)
+    expect(screen.getByRole('button', { name: 'Branch: main' })).toBeTruthy()
+  },
+)
+
+it.each(['selection', 'keyboard', 'close', 'filter', 'repository'])(
+  'cancels a pending parent jump on %s change',
+  async (change) => {
+    let finish!: (value: GraphData) => void
+    vi.mocked(api.repos).mockResolvedValue({
+      repos: [
+        { path: 'R', name: 'Repo R' },
+        { path: 'S', name: 'Repo S' },
+      ],
+    })
+    const initial = { ...graph, commits: [graph.commits[0], graph.commits[2]], moreAvailable: true }
+    vi.mocked(api.graph)
+      .mockResolvedValueOnce(initial)
+      .mockImplementationOnce(
+        () =>
+          new Promise((resolve) => {
+            finish = resolve
+          }),
+      )
+      .mockResolvedValue(graph)
+    render(<App />)
+    fireEvent.click(await screen.findByText('Fix typo'))
+    fireEvent.click(await screen.findByRole('button', { name: B.slice(0, 8) }))
+    await waitFor(() => expect(api.graph).toHaveBeenCalledTimes(2))
+    if (change === 'selection') fireEvent.click(row(C))
+    if (change === 'keyboard') fireEvent.keyDown(row(A), { key: 'ArrowDown' })
+    if (change === 'close') fireEvent.keyDown(window, { key: 'Escape' })
+    if (change === 'filter') {
+      fireEvent.click(screen.getByRole('button', { name: 'Branches: Show All' }))
+      fireEvent.click(screen.getByRole('button', { name: 'main' }))
+      await waitFor(() => expect(api.graph).toHaveBeenCalledTimes(3))
+    }
+    if (change === 'repository') {
+      fireEvent.click(screen.getByRole('button', { name: 'Repo R' }))
+      fireEvent.click(screen.getByRole('button', { name: 'Repo SS' }))
+      await waitFor(() => expect(api.graph).toHaveBeenCalledTimes(3))
+    }
+    await act(async () => finish(graph))
+    expect(row(B).getAttribute('aria-selected')).toBe('false')
+    expect(screen.queryByText('Details of Add search')).toBeNull()
+    if (change === 'selection' || change === 'keyboard') {
+      expect(row(C).getAttribute('aria-selected')).toBe('true')
+    }
+  },
+)
+
+it('preserves the current details when parent history fails to load', async () => {
+  vi.mocked(api.graph)
+    .mockResolvedValueOnce({ ...graph, commits: [graph.commits[0]], moreAvailable: true })
+    .mockRejectedValue(new Error('History unavailable'))
+  render(<App />)
+  fireEvent.click(await screen.findByText('Fix typo'))
+  fireEvent.click(await screen.findByRole('button', { name: B.slice(0, 8) }))
+  expect((await screen.findByRole('alert')).textContent).toContain('History unavailable')
+  expect(screen.getByText('Details of Fix typo')).toBeTruthy()
+  expect(api.graph).toHaveBeenCalledTimes(2)
+})
+
+it('ignores hash resolution after switching repositories, even when returning to the first one', async () => {
+  let finish!: (value: CommitDetails) => void
+  vi.mocked(api.repos).mockResolvedValue({
+    repos: [
+      { path: 'R', name: 'Repo R' },
+      { path: 'S', name: 'Repo S' },
+    ],
+  })
+  vi.mocked(api.graph).mockResolvedValue({
+    ...graph,
+    commits: [graph.commits[0]],
+    moreAvailable: true,
+  })
+  vi.mocked(api.commit).mockImplementationOnce(
+    () =>
+      new Promise((resolve) => {
+        finish = resolve
+      }),
+  )
+  render(<App />)
+  await screen.findByText('Fix typo')
+  fireEvent.click(screen.getByTitle('Find (Ctrl+F)'))
+  const input = screen.getByPlaceholderText('Find (message, author, hash, ref)')
+  fireEvent.change(input, { target: { value: C.slice(0, 8) } })
+  fireEvent.keyDown(input, { key: 'Enter' })
+  await waitFor(() => expect(api.commit).toHaveBeenCalledTimes(1))
+  fireEvent.click(screen.getByRole('button', { name: 'Repo R' }))
+  fireEvent.click(screen.getByRole('button', { name: 'Repo SS' }))
+  await screen.findByText('Fix typo')
+  fireEvent.click(screen.getByRole('button', { name: 'Repo S' }))
+  fireEvent.click(screen.getByRole('button', { name: 'Repo RR' }))
+  await screen.findByText('Fix typo')
+  await act(async () => finish(details(C)))
+  expect(api.graph).toHaveBeenCalledTimes(3)
+  expect(row(A).getAttribute('aria-selected')).toBe('false')
+})
+
 const stashes = [B, C].map((hash, index) => ({
   selector: `stash@{${index}}`,
   index,

@@ -1,4 +1,4 @@
-import { useMemo } from 'react'
+import { useMemo, useRef, useState } from 'react'
 import type { ActionArgs, ActionName, UndoStep } from '@shared/actions'
 import { checkedValue, choiceValue, optionalTextValue, textValue } from '@/components/dialogValues'
 import type { GitCommit, GitRef, GraphData, StashInfo } from '@shared/types'
@@ -38,6 +38,7 @@ export interface RunOptions {
 }
 
 export interface RepoActions {
+  isRunning: (action: ActionName) => boolean
   run: <K extends ActionName>(
     title: string,
     action: K,
@@ -70,6 +71,17 @@ export interface DropTarget {
   branch?: string
 }
 
+// File actions can target different paths concurrently; only guard repository operations.
+const TRACKED_ACTIONS = new Set<ActionName>([
+  'fetch',
+  'pull',
+  'push',
+  'continue',
+  'skip',
+  'abort',
+  'commit',
+])
+
 // oxlint-disable-next-line no-control-regex -- git forbids control characters in ref names
 const BRANCH_NAME_RE = /^(?!\/|.*(?:[/.]\.|\/\/|@\{|\\))[^\x00-\x1f\x7f ~^:?*[]+(?<!\.lock|[/.])$/
 
@@ -87,10 +99,25 @@ export function useRepoActions(
 ): RepoActions {
   const dialog = useDialog()
   const toast = useToast()
+  // The ref closes the gap before React renders; the snapshot drives button state.
+  const [pending, setPending] = useState(() => new Map<string, ReadonlySet<ActionName>>())
+  const inFlight = useRef(pending)
 
   return useMemo<RepoActions>(() => {
     const run: RepoActions['run'] = async (title, action, args, opts = {}) => {
-      if (!repo) return false
+      if (!repo || inFlight.current.get(repo)?.has(action)) return false
+      const updatePending = (running: boolean) => {
+        if (!TRACKED_ACTIONS.has(action)) return
+        const actions = new Set(inFlight.current.get(repo))
+        if (running) actions.add(action)
+        else actions.delete(action)
+        const next = new Map(inFlight.current)
+        if (actions.size) next.set(repo, actions)
+        else next.delete(repo)
+        inFlight.current = next
+        setPending(next)
+      }
+      updatePending(true)
       const id = toast.show('progress', `${title}…`)
       try {
         const r = await api.action(repo, action, args)
@@ -119,6 +146,8 @@ export function useRepoActions(
         toast.update(id, { kind: 'error', title: `${title} failed`, detail: (e as Error).message })
         refresh()
         return false
+      } finally {
+        updatePending(false)
       }
     }
 
@@ -1156,6 +1185,7 @@ export function useRepoActions(
     }
 
     return {
+      isRunning: (action) => !!repo && !!pending.get(repo)?.has(action),
       run,
       commitMenu,
       refMenu,
@@ -1173,5 +1203,5 @@ export function useRepoActions(
       editUser,
       copy,
     }
-  }, [repo, data, refresh, settings.fetchAndPrune, dialog, toast])
+  }, [repo, data, refresh, settings.fetchAndPrune, dialog, toast, pending])
 }

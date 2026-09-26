@@ -68,7 +68,13 @@ function Main() {
   const [compareState, setCompare] = useState<string | null>(null)
   const [diffState, setDiff] = useState<DiffTarget | null>(null)
   const [extraCommits, setExtraCommits] = useState(0)
-  const pendingStash = useRef<{ hash: string; version: number; loadedCount: number } | null>(null)
+  const pendingNavigation = useRef<{
+    hash: string
+    kind: 'commit' | 'stash'
+    resolving: boolean
+    version: number
+    loadedCount: number
+  } | null>(null)
   const [branches, setBranchesState] = useState<string[] | null>(null)
   const selectRepo = useCallback((path: string | null) => {
     activeRepo.current = path
@@ -90,7 +96,7 @@ function Main() {
     setCompare(null)
     setDiff(null)
     setExtraCommits(0)
-    pendingStash.current = null
+    pendingNavigation.current = null
   }, [])
   useEffect(() => {
     api
@@ -145,9 +151,27 @@ function Main() {
 
   // ----- graph data --------------------------------------------------------
   const setBranches = (b: string[] | null) => {
+    pendingNavigation.current = null
     setBranchesState(b)
     if (repo) saveLocal(`branches:${repo}`, b)
   }
+
+  // A pending jump belongs to this repository and these filters, not a later view.
+  useEffect(
+    () => () => {
+      pendingNavigation.current = null
+    },
+    [
+      // oxlint-disable-next-line react/exhaustive-effect-dependencies -- cancel navigation when its repository or filters change
+      repo,
+      branches,
+      settings.showRemoteBranches,
+      settings.showStashes,
+      settings.showTags,
+      settings.order,
+      settings.maxCommits,
+    ],
+  )
 
   const graphRequest = useMemo<GraphRequest | null>(
     () =>
@@ -257,54 +281,86 @@ function Main() {
   })
 
   const openDetails = (hash: string) => {
+    pendingNavigation.current = null
     setCompare(null)
     setDiff(null)
     setSelected(hash)
   }
 
-  const goToStash = (hash: string) => {
-    if (rowExists(hash)) {
-      pendingStash.current = null
-      openDetails(hash)
-      focusRow(hash)
-    } else {
-      pendingStash.current = { hash, version, loadedCount: data?.commits.length ?? 0 }
+  const goToCommit = async (hash: string, kind: 'commit' | 'stash' = 'commit', resolve = false) => {
+    if (!repo || !data) return
+    const pending = { hash, kind, resolving: resolve, version, loadedCount: data.commits.length }
+    pendingNavigation.current = pending
+    if (resolve) {
+      try {
+        // Git resolves abbreviated hashes and rejects ambiguous or unknown ones.
+        const target = await api.commit(repo, hash)
+        if (pendingNavigation.current !== pending) return
+        pending.hash = target.hash
+        pending.resolving = false
+      } catch (e) {
+        if (pendingNavigation.current !== pending) return
+        pendingNavigation.current = null
+        toast.show('error', 'Could not find commit', (e as Error).message)
+        return
+      }
+    }
+    if (rowExists(pending.hash)) {
+      openDetails(pending.hash)
+      focusRow(pending.hash)
+    } else if (data.moreAvailable || kind === 'stash') {
       setExtraCommits((count) => count * 2 + settings.maxCommits)
+    } else {
+      pendingNavigation.current = null
+      toast.show(
+        'info',
+        'Commit is not in the current history',
+        'Check the branch and visibility filters.',
+      )
     }
   }
 
-  // A stash can be older than the loaded history. Keep loading pages until its row is present.
+  // Keep the current details until the destination is present in the filtered graph.
   useEffect(() => {
-    const pending = pendingStash.current
-    if (!pending || loading) return
+    const pending = pendingNavigation.current
+    if (!pending || pending.resolving || loading) return
     if (error) {
-      pendingStash.current = null
+      pendingNavigation.current = null
       return
     }
     if (!data || version <= pending.version) return
     if (data.commits.some((commit) => commit.hash === pending.hash)) {
-      pendingStash.current = null
+      pendingNavigation.current = null
       focusPending.current = true
       // oxlint-disable-next-line react/set-state-in-effect -- complete navigation after loading the target row
       setFocused(pending.hash)
       setSelected(pending.hash)
       setCompare(null)
       setDiff(null)
-    } else if (!data.stashes.some((stash) => stash.hash === pending.hash)) {
-      pendingStash.current = null
+    } else if (
+      pending.kind === 'stash' &&
+      !data.stashes.some((stash) => stash.hash === pending.hash)
+    ) {
+      pendingNavigation.current = null
       toast.show('info', 'Stash is no longer available')
     } else if (data.moreAvailable && data.commits.length > pending.loadedCount) {
       pending.version = version
       pending.loadedCount = data.commits.length
       setExtraCommits((count) => count * 2 + settings.maxCommits)
     } else {
-      pendingStash.current = null
-      toast.show('info', 'Could not find stash in the loaded history')
+      pendingNavigation.current = null
+      toast.show(
+        'info',
+        pending.kind === 'stash'
+          ? 'Could not find stash in the loaded history'
+          : 'Commit is not in the current history',
+        pending.kind === 'commit' ? 'Check the branch and visibility filters.' : undefined,
+      )
     }
   }, [data, loading, error, version, settings.maxCommits, toast])
 
   const onSelect = (hash: string, e: MouseEvent) => {
-    pendingStash.current = null
+    pendingNavigation.current = null
     setFocused(hash)
     if (e.ctrlKey || e.metaKey) {
       if (!selected || selected === hash) {
@@ -347,6 +403,7 @@ function Main() {
       End: rows.length - 1,
     }
     if (!Object.hasOwn(step, e.key)) return
+    pendingNavigation.current = null
     e.preventDefault()
     const target = rows[Math.min(Math.max(step[e.key], 0), rows.length - 1)].commit.hash
     focusRow(target)
@@ -463,6 +520,7 @@ function Main() {
     [rows, searchMatches],
   )
   const setQuery = (q: string) => {
+    pendingNavigation.current = null
     setQueryState(q)
     setMatchIndex(0)
   }
@@ -479,6 +537,9 @@ function Main() {
     count: matchList.length,
     index: Math.min(matchIndex, Math.max(0, matchList.length - 1)),
     next: () => setMatchIndex((i) => (matchList.length ? (i + 1) % matchList.length : 0)),
+    goToCommit: /^[a-f\d]{4,64}$/i.test(query.trim())
+      ? () => void goToCommit(query.trim(), 'commit', true)
+      : undefined,
     prev: () =>
       setMatchIndex((i) => (matchList.length ? (i - 1 + matchList.length) % matchList.length : 0)),
     open: searchOpen,
@@ -512,6 +573,7 @@ function Main() {
         e.preventDefault()
         refresh()
       } else if (e.key === 'Escape' && !typing) {
+        pendingNavigation.current = null
         if (diff) setDiff(null)
         else if (menu) setMenu(null)
         else if (compare) setCompare(null)
@@ -607,13 +669,9 @@ function Main() {
         actions={actions}
         layout={layout}
         onOpenDiff={setDiff}
-        onSelectCommit={(h) => {
-          setCompare(null)
-          setSelected(h)
-          setFocused(h)
-          document.getElementById(`commit-${h}`)?.scrollIntoView({ block: 'center' })
-        }}
+        onSelectCommit={(h) => void goToCommit(h)}
         onClose={() => {
+          pendingNavigation.current = null
           setSelected(null)
           setCompare(null)
         }}
@@ -644,6 +702,9 @@ function Main() {
         updateSettings={updateSettings}
         search={search}
         loading={loading}
+        fetching={actions.isRunning('fetch')}
+        pulling={actions.isRunning('pull')}
+        pushing={actions.isRunning('push')}
         onRefresh={refresh}
         onFetch={() => void actions.fetchAll()}
         onPull={() => void actions.pull()}
@@ -670,17 +731,23 @@ function Main() {
               <button
                 type="button"
                 className="btn btn-secondary"
+                disabled={actions.isRunning('continue')}
+                aria-busy={actions.isRunning('continue')}
                 onClick={() =>
                   void actions.run(`Continue ${inProgress}`, 'continue', { op: inProgress })
                 }
               >
+                {actions.isRunning('continue') && <IconLoader className="w-4 h-4 animate-spin" />}
                 Continue
               </button>
               <button
                 type="button"
                 className="btn btn-secondary"
+                disabled={actions.isRunning('skip')}
+                aria-busy={actions.isRunning('skip')}
                 onClick={() => void actions.run(`Skip ${inProgress}`, 'skip', { op: inProgress })}
               >
+                {actions.isRunning('skip') && <IconLoader className="w-4 h-4 animate-spin" />}
                 Skip
               </button>
             </>
@@ -689,19 +756,25 @@ function Main() {
             <button
               type="button"
               className="btn btn-secondary"
+              disabled={actions.isRunning('commit')}
+              aria-busy={actions.isRunning('commit')}
               onClick={() =>
                 void actions.run('Commit merge', 'commit', { messageMode: 'prepared' })
               }
               title="Commit the merge with the default message (stage resolved files first)"
             >
+              {actions.isRunning('commit') && <IconLoader className="w-4 h-4 animate-spin" />}
               Commit Merge
             </button>
           )}
           <button
             type="button"
             className="btn btn-danger"
+            disabled={actions.isRunning('abort')}
+            aria-busy={actions.isRunning('abort')}
             onClick={() => void actions.run(`Abort ${inProgress}`, 'abort', { op: inProgress })}
           >
+            {actions.isRunning('abort') && <IconLoader className="w-4 h-4 animate-spin" />}
             Abort
           </button>
         </div>
@@ -799,6 +872,7 @@ function Main() {
                   className="icon-btn"
                   title="Close details (Esc)"
                   onClick={() => {
+                    pendingNavigation.current = null
                     setSelected(null)
                     setCompare(null)
                   }}
@@ -885,10 +959,17 @@ function Main() {
                   className="status-bar-button"
                   title={`Push to ${data.upstream.name}`}
                   aria-label={`Push to ${data.upstream.name} (${data.upstream.ahead} ahead)`}
-                  disabled={!data.currentBranch || data.remotes.length === 0}
+                  disabled={
+                    !data.currentBranch || data.remotes.length === 0 || actions.isRunning('push')
+                  }
+                  aria-busy={actions.isRunning('push')}
                   onClick={() => void actions.push()}
                 >
-                  <IconArrowUp className="w-3 h-3" />
+                  {actions.isRunning('push') ? (
+                    <IconLoader className="w-3 h-3 animate-spin" />
+                  ) : (
+                    <IconArrowUp className="w-3 h-3" />
+                  )}
                   {data.upstream.ahead}
                 </button>
                 <button
@@ -896,10 +977,15 @@ function Main() {
                   className="status-bar-button"
                   title={`Pull from ${data.upstream.name}`}
                   aria-label={`Pull from ${data.upstream.name} (${data.upstream.behind} behind)`}
-                  disabled={data.remotes.length === 0}
+                  disabled={data.remotes.length === 0 || actions.isRunning('pull')}
+                  aria-busy={actions.isRunning('pull')}
                   onClick={() => void actions.pull()}
                 >
-                  <IconArrowDown className="w-3 h-3" />
+                  {actions.isRunning('pull') ? (
+                    <IconLoader className="w-3 h-3 animate-spin" />
+                  ) : (
+                    <IconArrowDown className="w-3 h-3" />
+                  )}
                   {data.upstream.behind}
                 </button>
               </span>
@@ -929,7 +1015,7 @@ function Main() {
                     items: data.stashes.map((stash) => ({
                       label: `${stash.selector}: ${stash.message}`,
                       icon: <IconArchive />,
-                      onClick: () => goToStash(stash.hash),
+                      onClick: () => void goToCommit(stash.hash, 'stash'),
                     })),
                   })
                 }}
