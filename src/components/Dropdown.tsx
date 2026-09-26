@@ -36,7 +36,7 @@ export function Dropdown({ label, icon, title, className = '', align = 'left', c
       <button
         type="button"
         title={title}
-        className={`flex items-center gap-1 h-[26px] px-2 rounded bg-input hover:bg-bg-4 border border-transparent ${
+        className={`dropdown-trigger flex items-center gap-1 h-[26px] px-2 rounded border border-transparent ${
           open ? 'border-focus' : ''
         }`}
         onClick={() => setOpen((o) => !o)}
@@ -68,8 +68,8 @@ export function DropdownItem({
   return (
     <button
       type="button"
-      className={`w-full text-left px-3 py-1.5 flex items-center gap-2 hover:bg-accent hover:text-white ${
-        active ? 'bg-selected' : ''
+      className={`dropdown-item w-full text-left px-3 py-1.5 flex items-center gap-2 ${
+        active ? 'active' : ''
       } ${className}`}
       onClick={onClick}
     >

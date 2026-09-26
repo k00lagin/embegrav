@@ -41,6 +41,7 @@ export const DARK_MODERN_COLORS: Record<string, string> = {
   'sideBar.background': '#181818',
   'sideBar.border': '#2b2b2b',
   'sideBarSectionHeader.background': '#181818',
+  'sideBarSectionHeader.foreground': '#9d9d9d',
   'sideBarSectionHeader.border': '#2b2b2b',
   'panel.background': '#181818',
   'panel.border': '#2b2b2b',
@@ -133,6 +134,7 @@ export const LIGHT_MODERN_COLORS: Record<string, string> = {
   'sideBar.background': '#f8f8f8',
   'sideBar.border': '#e5e5e5',
   'sideBarSectionHeader.background': '#f8f8f8',
+  'sideBarSectionHeader.foreground': '#3b3b3b',
   'sideBarSectionHeader.border': '#e5e5e5',
   'panel.background': '#f8f8f8',
   'panel.border': '#e5e5e5',
@@ -263,10 +265,172 @@ function luminance(hex: string): number {
   return 0.2126 * r + 0.7152 * g + 0.0722 * b
 }
 
-/** Full colour map: theme colours on top of the matching default set. */
+function rgb(hex: string): number[] | null {
+  if (!/^#(?:[\da-f]{3,4}|[\da-f]{6}|[\da-f]{8})$/i.test(hex)) return null
+  const full = hex.length <= 5 ? hex.slice(1).replace(/./g, '$&$&') : hex.slice(1)
+  return [0, 2, 4].map((i) => parseInt(full.slice(i, i + 2), 16))
+}
+
+/** Concrete hex colors are also consumed by Shiki/Pierre, not just CSS. */
+function mix(background: string, foreground: string, amount: number): string {
+  const bg = rgb(background)
+  const fg = rgb(foreground)
+  if (!bg || !fg) return background
+  return (
+    '#' +
+    bg
+      .map((channel, i) =>
+        Math.round(channel + (fg[i] - channel) * amount)
+          .toString(16)
+          .padStart(2, '0'),
+      )
+      .join('')
+  )
+}
+
+function contrastingText(background: string): string {
+  const channels = (rgb(background) ?? [0, 0, 0]).map((channel) => {
+    const value = channel / 255
+    return value <= 0.04045 ? value / 12.92 : ((value + 0.055) / 1.055) ** 2.4
+  })
+  const relativeLuminance = channels[0] * 0.2126 + channels[1] * 0.7152 + channels[2] * 0.0722
+  return relativeLuminance > 0.179 ? '#000000' : '#ffffff'
+}
+
+/** Full colour map with related theme colours preferred over built-in fallbacks. */
 export function resolveColors(theme: VsCodeTheme): Record<string, string> {
   const base = isLightTheme(theme) ? LIGHT_MODERN_COLORS : DARK_MODERN_COLORS
-  return { ...base, ...theme.colors }
+  const own = theme.colors ?? {}
+  const colors = { ...base, ...own }
+  const set = (key: string, fallback: string) => {
+    colors[key] = own[key] ?? fallback
+  }
+  // Prefer explicit related tokens before falling back to a resolved parent.
+  const inherit = (key: string, ...parents: string[]) => {
+    set(
+      key,
+      parents.map((parent) => own[parent]).find((value) => value !== undefined) ??
+        colors[parents[0]],
+    )
+  }
+
+  inherit('foreground', 'editor.foreground')
+  inherit('editor.foreground', 'foreground')
+  set('descriptionForeground', mix(colors['editor.background'], colors.foreground, 0.75))
+  set('disabledForeground', mix(colors['editor.background'], colors.foreground, 0.5))
+  inherit('sideBar.background', 'editor.background')
+  inherit('sideBar.foreground', 'foreground')
+  inherit('panel.background', 'sideBar.background', 'editor.background')
+  set(
+    'widget.border',
+    own['contrastBorder'] ??
+      own['panel.border'] ??
+      own['sideBar.border'] ??
+      own['input.border'] ??
+      mix(colors['sideBar.background'], colors.foreground, 0.25),
+  )
+  inherit('panel.border', 'widget.border', 'sideBar.border')
+  inherit('sideBar.border', 'panel.border', 'widget.border')
+  inherit('editorWidget.background', 'sideBar.background', 'editor.background')
+  inherit('editorWidget.foreground', 'foreground', 'editor.foreground')
+  inherit('editorWidget.border', 'widget.border', 'panel.border', 'input.border')
+  inherit('sideBarSectionHeader.background', 'sideBar.background', 'editor.background')
+  inherit('sideBarSectionHeader.foreground', 'sideBar.foreground', 'foreground')
+  inherit('sideBarSectionHeader.border', 'sideBar.border', 'panel.border')
+  inherit('titleBar.activeBackground', 'sideBar.background', 'editor.background')
+  inherit('statusBar.background', 'sideBar.background', 'editor.background')
+  inherit('statusBar.foreground', 'foreground')
+  inherit('statusBar.border', 'panel.border')
+
+  set('list.hoverBackground', mix(colors['editor.background'], colors.foreground, 0.12))
+  set(
+    'list.activeSelectionBackground',
+    own['list.inactiveSelectionBackground'] ??
+      mix(colors['editor.background'], colors.foreground, 0.25),
+  )
+  inherit('list.activeSelectionForeground', 'foreground')
+  set('list.inactiveSelectionBackground', mix(colors['editor.background'], colors.foreground, 0.18))
+  set(
+    'focusBorder',
+    own['list.focusOutline'] ??
+      own['button.background'] ??
+      own['textLink.foreground'] ??
+      colors.foreground,
+  )
+  inherit('list.focusOutline', 'focusBorder')
+  inherit('textLink.foreground', 'focusBorder')
+  inherit('textLink.activeForeground', 'textLink.foreground')
+  inherit('toolbar.hoverBackground', 'list.hoverBackground')
+
+  inherit('input.background', 'editor.background', 'dropdown.background')
+  inherit('input.foreground', 'foreground', 'editor.foreground')
+  inherit('input.border', 'widget.border', 'dropdown.border', 'panel.border')
+  inherit('input.placeholderForeground', 'descriptionForeground')
+  inherit('dropdown.background', 'input.background', 'editorWidget.background', 'editor.background')
+  inherit('dropdown.foreground', 'input.foreground', 'foreground')
+  inherit('dropdown.border', 'input.border', 'widget.border')
+  inherit('checkbox.background', 'input.background', 'dropdown.background')
+  inherit('checkbox.foreground', 'input.foreground', 'foreground')
+  inherit('checkbox.border', 'input.border', 'dropdown.border')
+
+  inherit(
+    'button.background',
+    'list.activeSelectionBackground',
+    'focusBorder',
+    'textLink.foreground',
+  )
+  set(
+    'button.foreground',
+    !own['button.background'] &&
+      colors['button.background'] === colors['list.activeSelectionBackground']
+      ? colors['list.activeSelectionForeground']
+      : contrastingText(colors['button.background']),
+  )
+  set(
+    'button.hoverBackground',
+    mix(colors['button.background'], contrastingText(colors['button.background']), 0.12),
+  )
+  inherit(
+    'button.secondaryBackground',
+    'input.background',
+    'dropdown.background',
+    'editorWidget.background',
+  )
+  inherit('button.secondaryForeground', 'input.foreground', 'foreground')
+  set(
+    'button.secondaryHoverBackground',
+    mix(colors['button.secondaryBackground'], colors['button.secondaryForeground'], 0.12),
+  )
+
+  inherit(
+    'menu.background',
+    'dropdown.background',
+    'editorWidget.background',
+    'sideBar.background',
+    'editor.background',
+  )
+  inherit('menu.foreground', 'dropdown.foreground', 'foreground')
+  inherit('menu.border', 'dropdown.border', 'editorWidget.border', 'widget.border')
+  inherit('menu.selectionBackground', 'list.activeSelectionBackground')
+  inherit('menu.selectionForeground', 'list.activeSelectionForeground')
+  inherit('menu.separatorBackground', 'menu.border', 'dropdown.border', 'panel.border')
+  inherit(
+    'notifications.background',
+    'editorWidget.background',
+    'sideBar.background',
+    'editor.background',
+  )
+  inherit('notifications.foreground', 'editorWidget.foreground', 'foreground')
+  inherit('notifications.border', 'editorWidget.border', 'panel.border')
+  inherit('notificationsErrorIcon.foreground', 'errorForeground')
+  inherit('notificationsWarningIcon.foreground', 'gitDecoration.modifiedResourceForeground')
+  inherit('notificationsInfoIcon.foreground', 'textLink.foreground', 'focusBorder')
+  inherit('progressBar.background', 'focusBorder', 'button.background')
+  inherit('badge.background', 'list.activeSelectionBackground')
+  inherit('badge.foreground', 'list.activeSelectionForeground')
+  set('scrollbarSlider.background', mix(colors['editor.background'], colors.foreground, 0.25))
+  set('scrollbarSlider.hoverBackground', mix(colors['editor.background'], colors.foreground, 0.4))
+  return colors
 }
 
 let appliedKeys = new Set<string>()
@@ -281,6 +445,10 @@ export function applyTheme(theme: VsCodeTheme): void {
   for (const [key, value] of Object.entries(colors)) {
     if (typeof value === 'string') root.style.setProperty(themeCssVar(key), value)
   }
+  root.style.setProperty(
+    '--embegrav-danger-foreground',
+    contrastingText(colors['gitDecoration.deletedResourceForeground']),
+  )
   root.dataset.themeType = theme.type ?? (isLightTheme(theme) ? 'light' : 'dark')
 }
 

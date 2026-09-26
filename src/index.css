@@ -27,10 +27,12 @@
   --vscode-editor-findMatchBackground: #9e6a03;
   --vscode-editor-findMatchHighlightBackground: #ea5c0055;
   --vscode-editorWidget-background: #202020;
+  --vscode-editorWidget-foreground: #cccccc;
   --vscode-editorWidget-border: #454545;
   --vscode-sideBar-background: #181818;
   --vscode-sideBar-border: #2b2b2b;
   --vscode-sideBarSectionHeader-background: #181818;
+  --vscode-sideBarSectionHeader-foreground: #9d9d9d;
   --vscode-sideBarSectionHeader-border: #2b2b2b;
   --vscode-panel-background: #181818;
   --vscode-panel-border: #2b2b2b;
@@ -51,6 +53,7 @@
   --vscode-dropdown-border: #3c3c3c;
   --vscode-dropdown-foreground: #cccccc;
   --vscode-checkbox-background: #313131;
+  --vscode-checkbox-foreground: #cccccc;
   --vscode-checkbox-border: #3c3c3c;
   --vscode-button-background: #0078d4;
   --vscode-button-foreground: #ffffff;
@@ -167,6 +170,10 @@ button:disabled {
   cursor: default;
   opacity: 0.5;
 }
+button:focus-visible {
+  outline: 1px solid var(--vscode-focusBorder);
+  outline-offset: 2px;
+}
 
 input[type='text'],
 input[type='search'],
@@ -198,7 +205,61 @@ select:focus {
 
 input[type='checkbox'],
 input[type='radio'] {
-  accent-color: var(--vscode-button-background);
+  appearance: none;
+  display: inline-grid;
+  place-content: center;
+  flex-shrink: 0;
+  width: 1em;
+  height: 1em;
+  vertical-align: middle;
+  border: 1px solid var(--vscode-checkbox-border);
+  border-radius: 2px;
+  background: var(--vscode-checkbox-background);
+  color: var(--vscode-checkbox-foreground);
+  cursor: pointer;
+}
+input[type='checkbox']::before,
+input[type='radio']::before {
+  content: '';
+  width: 0.65em;
+  height: 0.65em;
+  background: currentColor;
+  visibility: hidden;
+}
+input[type='checkbox']::before {
+  clip-path: polygon(14% 44%, 0 59%, 38% 96%, 100% 20%, 83% 6%, 36% 66%);
+}
+input[type='radio'],
+input[type='radio']::before {
+  border-radius: 50%;
+}
+input[type='checkbox']:checked::before,
+input[type='radio']:checked::before,
+input[type='checkbox']:indeterminate::before {
+  visibility: visible;
+}
+input[type='checkbox']:indeterminate::before {
+  clip-path: inset(40% 0);
+}
+input[type='checkbox']:focus-visible,
+input[type='radio']:focus-visible {
+  outline: 1px solid var(--vscode-focusBorder);
+  outline-offset: 2px;
+}
+input[type='checkbox']:disabled,
+input[type='radio']:disabled {
+  opacity: 0.5;
+  cursor: default;
+}
+@media (forced-colors: active) {
+  input[type='checkbox'],
+  input[type='radio'] {
+    appearance: auto;
+  }
+  input[type='checkbox']::before,
+  input[type='radio']::before {
+    display: none;
+  }
 }
 
 .btn {
@@ -211,6 +272,7 @@ input[type='radio'] {
   color: var(--vscode-button-foreground);
   border: none;
   line-height: 1.3;
+  box-shadow: inset 0 0 0 1px var(--vscode-button-border, transparent);
 }
 .btn:hover:not(:disabled) {
   background: var(--vscode-button-hoverBackground);
@@ -224,7 +286,7 @@ input[type='radio'] {
 }
 .btn-danger {
   background: var(--vscode-gitDecoration-deletedResourceForeground);
-  color: #ffffff;
+  color: var(--embegrav-danger-foreground, #ffffff);
 }
 .btn-danger:hover:not(:disabled) {
   filter: brightness(1.15);
@@ -238,7 +300,7 @@ input[type='radio'] {
   border-radius: 4px;
   background: transparent;
   border: none;
-  color: var(--vscode-foreground);
+  color: inherit;
 }
 .icon-btn:hover:not(:disabled),
 .icon-btn.active {
@@ -279,7 +341,7 @@ input[type='radio'] {
   text-align: left;
   padding: 4px 8px;
   height: 26px;
-  color: var(--vscode-descriptionForeground);
+  color: var(--vscode-sideBarSectionHeader-foreground);
   user-select: none;
 }
 .commit-table td {
@@ -446,7 +508,7 @@ input[type='radio'] {
 .context-menu-item.danger:hover:not(:disabled):not([aria-disabled='true']),
 .context-menu-item.danger:focus-visible:not([aria-disabled='true']) {
   background: var(--vscode-gitDecoration-deletedResourceForeground);
-  color: #fff;
+  color: var(--embegrav-danger-foreground, #ffffff);
 }
 .context-menu-sep {
   height: 1px;
@@ -467,6 +529,24 @@ input[type='radio'] {
   min-width: 220px;
 }
 
+.dropdown-trigger {
+  background: var(--vscode-dropdown-background);
+  color: var(--vscode-dropdown-foreground);
+}
+.dropdown-trigger:hover {
+  background: var(--vscode-toolbar-hoverBackground);
+}
+.dropdown-item.active,
+.dropdown-item:hover,
+.dropdown-item:focus-visible {
+  background: var(--vscode-list-activeSelectionBackground);
+  color: var(--vscode-list-activeSelectionForeground);
+}
+.dropdown-item.active input[type='checkbox'] {
+  background: var(--vscode-checkbox-selectBackground, var(--vscode-checkbox-background));
+  border-color: var(--vscode-checkbox-selectBorder, var(--vscode-checkbox-border));
+}
+
 .modal-backdrop {
   position: fixed;
   inset: 0;
@@ -478,9 +558,20 @@ input[type='radio'] {
 }
 .modal {
   background: var(--vscode-editorWidget-background);
+  color: var(--vscode-editorWidget-foreground);
   border: 1px solid var(--vscode-editorWidget-border);
   border-radius: 6px;
   box-shadow: 0 8px 24px var(--vscode-widget-shadow);
+}
+
+.toast {
+  background: var(--vscode-notifications-background);
+  color: var(--vscode-notifications-foreground);
+  border-color: var(--vscode-notifications-border);
+  box-shadow: 0 4px 14px var(--vscode-widget-shadow);
+}
+.toast-error-icon {
+  color: var(--vscode-notificationsErrorIcon-foreground);
 }
 
 .kv-table td {
@@ -507,7 +598,7 @@ input[type='radio'] {
   font-weight: 700;
   text-transform: uppercase;
   letter-spacing: 0.04em;
-  color: var(--vscode-descriptionForeground);
+  color: var(--vscode-sideBarSectionHeader-foreground);
   background: var(--vscode-sideBarSectionHeader-background);
   border-top: 1px solid var(--vscode-sideBarSectionHeader-border);
   border-bottom: 1px solid var(--vscode-sideBarSectionHeader-border);

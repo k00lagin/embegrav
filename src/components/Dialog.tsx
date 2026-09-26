@@ -201,7 +201,7 @@ function DialogView({
       onMouseDown={() => onClose(null)}
     >
       <form
-        className="bg-bg-3 border border-border-2 rounded-md shadow-2xl w-[460px] max-w-[92vw] max-h-[80vh] overflow-y-auto"
+        className="modal w-[460px] max-w-[92vw] max-h-[80vh] overflow-y-auto"
         onMouseDown={(e) => e.stopPropagation()}
         onSubmit={(e) => {
           e.preventDefault()

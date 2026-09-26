@@ -98,23 +98,17 @@ export function ToastProvider({ children }: { children: ReactNode }) {
           <div
             key={t.id}
             role={t.kind === 'error' ? 'alert' : 'status'}
-            className={`rounded-md border shadow-xl px-3 py-2 flex gap-2 items-start bg-bg-3 ${
-              t.kind === 'error'
-                ? 'border-danger'
-                : t.kind === 'success'
-                  ? 'border-success'
-                  : 'border-border-2'
-            }`}
+            className="toast rounded-md border px-3 py-2 flex gap-2 items-start"
           >
             <span className="mt-0.5 shrink-0">
-              {t.kind === 'error' && <IconCircleAlert className="text-danger" />}
+              {t.kind === 'error' && <IconCircleAlert className="toast-error-icon" />}
               {t.kind === 'success' && <IconCircleCheck className="text-success" />}
               {t.kind === 'progress' && <IconLoader className="animate-spin text-fg-muted" />}
             </span>
             <div className="min-w-0 flex-1">
               <div className="font-medium break-words">{t.title}</div>
               {t.detail && (
-                <pre className="mono text-xs text-fg-muted whitespace-pre-wrap break-words mt-1 max-h-40 overflow-y-auto">
+                <pre className="mono text-xs opacity-80 whitespace-pre-wrap break-words mt-1 max-h-40 overflow-y-auto">
                   {t.detail}
                 </pre>
               )}
