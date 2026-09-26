@@ -337,7 +337,11 @@ function RowGroup(p: RowProps) {
     date: (
       <td
         key="date"
-        title={row.kind === 'uncommitted' ? '' : new Date(date * 1000).toLocaleString()}
+        title={
+          row.kind === 'uncommitted'
+            ? ''
+            : new Date(date * 1000).toLocaleString('en', { hourCycle: 'h23' })
+        }
       >
         {row.kind === 'uncommitted' ? '' : formatDate(date, settings.dateFormat)}
       </td>

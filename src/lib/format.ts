@@ -10,16 +10,21 @@ const UNITS: [number, Intl.RelativeTimeFormatUnit][] = [
   [Number.POSITIVE_INFINITY, 'year'],
 ]
 
-const rtf = new Intl.RelativeTimeFormat(undefined, { numeric: 'auto' })
-const dtf = new Intl.DateTimeFormat(undefined, {
+const rtf = new Intl.RelativeTimeFormat('en', { numeric: 'auto' })
+const dtf = new Intl.DateTimeFormat('en', {
   year: 'numeric',
   month: 'short',
   day: '2-digit',
   hour: '2-digit',
   minute: '2-digit',
+  hourCycle: 'h23',
 })
-const df = new Intl.DateTimeFormat(undefined, { year: 'numeric', month: 'short', day: '2-digit' })
-const full = new Intl.DateTimeFormat(undefined, { dateStyle: 'full', timeStyle: 'long' })
+const df = new Intl.DateTimeFormat('en', { year: 'numeric', month: 'short', day: '2-digit' })
+const full = new Intl.DateTimeFormat('en', {
+  dateStyle: 'full',
+  timeStyle: 'long',
+  hourCycle: 'h23',
+})
 
 export function relativeTime(unixSeconds: number, now = Date.now()): string {
   let delta = (unixSeconds * 1000 - now) / 1000
