@@ -586,14 +586,30 @@ export async function getFileDiff(req: FileDiffRequest): Promise<FileDiffRespons
   const { repo, path } = req
   if (typeof path !== 'string' || !path) throw new Error('path is required')
   const paths = req.oldPath && req.oldPath !== path ? [req.oldPath, path] : [path]
+  // Keep patches applicable regardless of local color, prefix, context or diff-driver settings.
+  const diffArgs = [
+    '--literal-pathspecs',
+    'diff',
+    '--no-ext-diff',
+    '--no-textconv',
+    '--no-color',
+    '--src-prefix=a/',
+    '--dst-prefix=b/',
+    '--unified=3',
+    '--inter-hunk-context=0',
+  ]
   let args: string[]
-  if (req.to === 'WORKING' && req.untracked) {
-    const r = await gitRaw(repo, ['diff', '--no-index', '--', '/dev/null', path], {
+  if (
+    req.to === 'WORKING' &&
+    req.untracked &&
+    (await getUncommitted(repo, [path])).some((file) => file.path === path && file.untracked)
+  ) {
+    const r = await gitRaw(repo, [...diffArgs, '--no-index', '--', '/dev/null', path], {
       allowCodes: [1],
     })
     return { patch: r.stdout, binary: /^Binary files/m.test(r.stdout) }
   }
-  if (req.from === 'INDEX' && req.to === 'WORKING') {
+  if ((req.from === 'INDEX' || req.untracked) && req.to === 'WORKING') {
     args = ['diff', '-M', '--', ...paths]
   } else if (req.to === 'WORKING') {
     const from = req.from === 'HEAD' ? 'HEAD' : assertSafeArg(req.from, 'from')
@@ -609,7 +625,7 @@ export async function getFileDiff(req: FileDiffRequest): Promise<FileDiffRespons
     const to = assertSafeArg(req.to, 'to')
     args = ['diff', '-M', from, to, '--', ...paths]
   }
-  const patch = await git(repo, args)
+  const patch = await git(repo, [...diffArgs, ...args.slice(1)])
   return { patch, binary: /^Binary files .* differ$/m.test(patch) }
 }
 

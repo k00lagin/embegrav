@@ -46,8 +46,10 @@ export interface ActionArgs {
   stashBranch: { name: string; selector: string }
   stage: { paths: string[] }
   stageAll: Record<string, never>
+  stageHunk: { path: string; patch: string; hunk: number }
   unstage: { paths: string[] }
   unstageAll: Record<string, never>
+  unstageHunk: { path: string; patch: string; hunk: number }
   discard: { paths: string[] }
   discardAll: { includeUntracked?: boolean }
   commit: (
@@ -69,7 +71,7 @@ export type UndoStep = {
   [K in ActionName]: { label: string; action: K; args: ActionArgs[K] }
 }[ActionName]
 
-type Rule = 'string' | 'string?' | 'boolean?' | 'paths' | readonly string[]
+type Rule = 'string' | 'string?' | 'boolean?' | 'paths' | 'integer' | readonly string[]
 const rules = {
   fetch: { remote: 'string?', prune: 'boolean?', pruneTags: 'boolean?' },
   pull: {
@@ -136,8 +138,10 @@ const rules = {
   stashBranch: { name: 'string', selector: 'string' },
   stage: { paths: 'paths' },
   stageAll: {},
+  stageHunk: { path: 'string', patch: 'string', hunk: 'integer' },
   unstage: { paths: 'paths' },
   unstageAll: {},
+  unstageHunk: { path: 'string', patch: 'string', hunk: 'integer' },
   discard: { paths: 'paths' },
   discardAll: { includeUntracked: 'boolean?' },
   commit: {
@@ -172,13 +176,17 @@ export function decodeActionRequest(value: unknown): ActionRequest {
     if (typeof rule === 'string' && rule.endsWith('?') && field === undefined) continue
     const valid = Array.isArray(rule)
       ? typeof field === 'string' && rule.includes(field)
-      : rule === 'boolean?'
-        ? typeof field === 'boolean'
-        : rule === 'paths'
-          ? Array.isArray(field) &&
-            field.length > 0 &&
-            field.every((p: unknown) => typeof p === 'string' && p.length > 0 && !p.includes('\0'))
-          : typeof field === 'string' && !field.includes('\0')
+      : rule === 'integer'
+        ? typeof field === 'number' && Number.isSafeInteger(field) && field >= 0
+        : rule === 'boolean?'
+          ? typeof field === 'boolean'
+          : rule === 'paths'
+            ? Array.isArray(field) &&
+              field.length > 0 &&
+              field.every(
+                (p: unknown) => typeof p === 'string' && p.length > 0 && !p.includes('\0'),
+              )
+            : typeof field === 'string' && !field.includes('\0')
     if (!valid || (rule === 'string' && field === '')) throw new Error(`Invalid argument: ${key}`)
     // Ref-like arguments are passed as Git operands; validate all of them before
     // handlers such as editRemote perform the first of several Git calls.
@@ -186,6 +194,8 @@ export function decodeActionRequest(value: unknown): ActionRequest {
       typeof field === 'string' &&
       field &&
       key !== 'message' &&
+      key !== 'path' &&
+      key !== 'patch' &&
       value.action !== 'setUser' &&
       (field.startsWith('-') || /[\n\r]/.test(field))
     )

@@ -892,9 +892,11 @@ function Main() {
         )}
         {diff && repo && (
           <DiffViewer
-            key={`${diff.from}:${diff.to}:${diff.file.path}`}
+            key={`${repo}:${diff.from}:${diff.to}:${diff.file.path}`}
             repo={repo}
             target={diff}
+            actions={actions}
+            version={version}
             diffStyle={settings.diffStyle}
             onDiffStyleChange={(s) => updateSettings({ diffStyle: s })}
             onClose={() => setDiff(null)}

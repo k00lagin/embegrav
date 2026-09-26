@@ -80,6 +80,8 @@ const TRACKED_ACTIONS = new Set<ActionName>([
   'skip',
   'abort',
   'commit',
+  'stageHunk',
+  'unstageHunk',
 ])
 
 // oxlint-disable-next-line no-control-regex -- git forbids control characters in ref names

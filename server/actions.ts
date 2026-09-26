@@ -2,6 +2,7 @@ import { rm } from 'node:fs/promises'
 import { join } from 'node:path'
 import { assertSafeArg, git, gitOrNull, gitOutput, optionalString } from './git.ts'
 import { getState, getUncommitted } from './repo.ts'
+import { applyHunk } from './hunks.ts'
 import type { ActionArgs, ActionName, UndoStep } from '../shared/actions.ts'
 
 export interface ActionOutcome {
@@ -361,6 +362,8 @@ const actions: Handlers = {
   async stageAll(repo) {
     return gitOutput(repo, ['add', '-A'])
   },
+  stageHunk: (repo, args) => applyHunk(repo, args, false),
+  unstageHunk: (repo, args) => applyHunk(repo, args, true),
   async unstage(repo, a) {
     return gitOutput(repo, ['--literal-pathspecs', 'reset', '-q', '--', ...a.paths])
   },

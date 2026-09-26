@@ -1,6 +1,8 @@
-import { useCallback, useEffect, useMemo, useState } from 'react'
+import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
 import { File, PatchDiff, type FileDiffOptions, type FileOptions } from '@pierre/diffs/react'
 import type { ChangedFile } from '@shared/types'
+import { splitPatchHunks } from '@shared/patch'
+import type { RepoActions } from '@/hooks/useRepoActions'
 import { api } from '@/api'
 import { useTheme } from '@/theme/ThemeProvider'
 import { shikiThemeFor } from '@/theme/vscode'
@@ -17,6 +19,8 @@ import IconWrapText from '~icons/lucide/wrap-text'
 import IconLoader from '~icons/lucide/loader-circle'
 import IconCircleAlert from '~icons/lucide/circle-alert'
 import IconRotateCw from '~icons/lucide/rotate-cw'
+import IconPlus from '~icons/lucide/plus'
+import IconMinus from '~icons/lucide/minus'
 
 export interface DiffTarget {
   file: ChangedFile
@@ -39,6 +43,8 @@ interface Props {
   diffStyle: 'unified' | 'split'
   onDiffStyleChange: (s: 'unified' | 'split') => void
   onClose: () => void
+  actions?: Pick<RepoActions, 'run' | 'isRunning'>
+  version?: number
 }
 
 const STATUS_LABEL: Record<string, string> = {
@@ -58,6 +64,8 @@ export function DiffViewer({
   diffStyle,
   onDiffStyleChange,
   onClose,
+  actions,
+  version = 0,
 }: Props) {
   const [selection, setSelection] = useState<{ source: DiffTarget; target: DiffTarget } | null>(
     null,
@@ -93,6 +101,7 @@ export function DiffViewer({
     target: DiffTarget
     view: View
     attempt: number
+    version: number
     patch: string | null
     contents: string | null
     binary: boolean
@@ -102,11 +111,43 @@ export function DiffViewer({
     state?.repo === repo &&
     state.target === target &&
     state.view === view &&
-    state.attempt === attempt
+    state.attempt === attempt &&
+    state.version === version
   const patch = current ? state.patch : null
   const binary = current ? state.binary : false
   const error = current ? state.error : null
   const [wrap, setWrap] = useState(false)
+  const hunkInFlight = useRef(false)
+  const [pendingHunk, setPendingHunk] = useState<{ target: DiffTarget; index: number } | null>(null)
+  const hunkAction =
+    !target.workingComparison && target.file.status !== 'U'
+      ? target.to === 'INDEX' && (target.from === 'HEAD' || target.from === 'EMPTY')
+        ? 'unstageHunk'
+        : target.to === 'WORKING' && (target.from === 'INDEX' || target.file.status === '?')
+          ? 'stageHunk'
+          : null
+      : null
+  const hunks = useMemo(() => (patch && !binary ? splitPatchHunks(patch) : []), [patch, binary])
+  const canApplyHunks = !!actions && hunkAction !== null && hunks.length > 0
+  const changingHunk =
+    !!pendingHunk || !!actions?.isRunning('stageHunk') || !!actions?.isRunning('unstageHunk')
+  const applyHunk = async (index: number) => {
+    if (!actions || !hunkAction || !patch || changingHunk || hunkInFlight.current) return
+    hunkInFlight.current = true
+    setPendingHunk({ target, index })
+    try {
+      await actions.run(hunkAction === 'stageHunk' ? 'Stage hunk' : 'Unstage hunk', hunkAction, {
+        path: target.file.path,
+        patch,
+        hunk: index,
+      })
+    } finally {
+      // Reload after failures too: a stale patch must not remain actionable.
+      retry()
+      hunkInFlight.current = false
+      setPendingHunk(null)
+    }
+  }
   const { resolved, isLight } = useTheme()
 
   useEffect(() => {
@@ -129,7 +170,7 @@ export function DiffViewer({
     void request
       .then((r) => {
         if (cancelled) return
-        setState({ repo, target, view, attempt, ...r, error: null })
+        setState({ repo, target, view, attempt, version, ...r, error: null })
       })
       .catch((e: Error) => {
         if (!cancelled)
@@ -138,6 +179,7 @@ export function DiffViewer({
             target,
             view,
             attempt,
+            version,
             patch: null,
             contents: null,
             binary: false,
@@ -147,7 +189,7 @@ export function DiffViewer({
     return () => {
       cancelled = true
     }
-  }, [repo, target, view, revision, filePath, attempt])
+  }, [repo, target, view, revision, filePath, attempt, version])
 
   useEffect(() => {
     const onKey = (e: KeyboardEvent) => {
@@ -192,7 +234,24 @@ export function DiffViewer({
     [resolved, isLight, wrap],
   )
 
+  // Each control applies only its displayed block; expanding a partial patch must not
+  // hydrate other changes into that block from the complete files.
+  const hunkOptions = useMemo<FileDiffOptions<undefined, undefined>>(
+    () => ({ ...options, hunkSeparators: 'simple', loadDiffFiles: undefined }),
+    [options],
+  )
+
   const f = target.file
+  const counts =
+    hunkAction && patch !== null && (hunks.length > 0 || !patch.trim())
+      ? hunks.reduce(
+          (sum, hunk) => ({
+            additions: sum.additions + hunk.additions,
+            deletions: sum.deletions + hunk.deletions,
+          }),
+          { additions: 0, deletions: 0 },
+        )
+      : f
   return (
     <div
       className="absolute inset-0 z-40 flex flex-col bg-bg"
@@ -253,10 +312,10 @@ export function DiffViewer({
           {view === 'diff' ? target.label : revision}
         </span>
         <span className="flex-1" />
-        {view === 'diff' && f.additions !== null && (
-          <span className="text-xs">
-            <span className="text-success">+{f.additions}</span>{' '}
-            <span className="text-danger">−{f.deletions}</span>
+        {view === 'diff' && counts.additions !== null && (
+          <span className="text-xs" aria-label="Change summary">
+            <span className="text-success">+{counts.additions}</span>{' '}
+            <span className="text-danger">−{counts.deletions}</span>
           </span>
         )}
         <select
@@ -386,13 +445,47 @@ export function DiffViewer({
               No textual changes (mode change or identical content).
             </div>
           )}
-          {patch !== null && !binary && patch.trim() !== '' && (
-            <PatchDiff
-              key={`${target.from}:${target.to}:${f.path}:${diffStyle}`}
-              patch={patch}
-              options={options}
-            />
-          )}
+          {patch !== null &&
+            !binary &&
+            patch.trim() !== '' &&
+            (canApplyHunks ? (
+              hunks.map((hunk, index) => (
+                <section key={`${patch}:${index}`} aria-label={`Hunk ${index + 1}`}>
+                  <div className="flex items-center gap-3 px-3 py-1 border-y border-border bg-bg-2">
+                    <span
+                      className="mono text-xs text-fg-muted truncate flex-1"
+                      title={hunk.heading}
+                    >
+                      {hunk.heading}
+                    </span>
+                    <button
+                      type="button"
+                      className="btn btn-secondary shrink-0"
+                      aria-label={`${hunkAction === 'stageHunk' ? 'Stage' : 'Unstage'} hunk ${index + 1}`}
+                      disabled={changingHunk}
+                      aria-busy={pendingHunk?.target === target && pendingHunk.index === index}
+                      onClick={() => void applyHunk(index)}
+                    >
+                      {pendingHunk?.target === target && pendingHunk.index === index ? (
+                        <IconLoader className="w-4 h-4 animate-spin" />
+                      ) : hunkAction === 'stageHunk' ? (
+                        <IconPlus className="w-4 h-4" />
+                      ) : (
+                        <IconMinus className="w-4 h-4" />
+                      )}
+                      {hunkAction === 'stageHunk' ? 'Stage hunk' : 'Unstage hunk'}
+                    </button>
+                  </div>
+                  <PatchDiff patch={hunk.patch} options={hunkOptions} />
+                </section>
+              ))
+            ) : (
+              <PatchDiff
+                key={`${target.from}:${target.to}:${f.path}:${diffStyle}`}
+                patch={patch}
+                options={options}
+              />
+            ))}
         </div>
         {sidebarOpen && (
           <aside
