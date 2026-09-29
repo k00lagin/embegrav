@@ -8,7 +8,7 @@ import {
   type MouseEvent,
 } from 'react'
 import type { GitCommit, GraphRequest, RepoInfo } from '@shared/types'
-import { api, subscribeRepoEvents } from './api'
+import { UnauthorizedError, api, subscribeRepoEvents } from './api'
 import { layoutGraph } from './graph/layout'
 import { UNCOMMITTED, pluralize, shortHash } from './lib/format'
 import { loadLocal, saveLocal, useSettings } from './lib/settings'
@@ -20,6 +20,7 @@ import { useErrorToast } from './hooks/useErrorToast'
 import { CommitDetails, type DetailsMode } from './components/CommitDetails'
 import { CommitTable, type TableRow } from './components/CommitTable'
 import { ContextMenu, type ContextMenuState, type MenuEntry } from './components/ContextMenu'
+import { AuthGate } from './components/AuthGate'
 import { DialogProvider, useDialog } from './components/Dialog'
 import { checkedValue, textValue } from './components/dialogValues'
 import { DiffViewer, type DiffTarget } from './components/DiffViewer'
@@ -46,14 +47,14 @@ export function App() {
     <ThemeProvider>
       <ToastProvider>
         <DialogProvider>
-          <Main />
+          <AuthGate>{(link) => <Main initialRepo={link.repo} />}</AuthGate>
         </DialogProvider>
       </ToastProvider>
     </ThemeProvider>
   )
 }
 
-function Main() {
+function Main({ initialRepo }: { initialRepo: string | null }) {
   const [settings, updateSettings] = useSettings()
   const dialog = useDialog()
   const toast = useToast()
@@ -99,19 +100,40 @@ function Main() {
     pendingNavigation.current = null
   }, [])
   useEffect(() => {
-    api
-      .repos()
-      .then((r) => {
-        setRepos(r.repos)
+    // A `?repo=` link registers and opens that path; otherwise reopen the last repository.
+    type Loaded = { list: RepoInfo[]; open: string | null }
+    const opened: Promise<Loaded | null> = initialRepo
+      ? api.addRepo(initialRepo).then(
+          (r) => ({ list: r.repos, open: r.added[0]?.path ?? null }),
+          (e: Error) => {
+            if (!(e instanceof UnauthorizedError)) {
+              toast.show('error', `Could not open ${initialRepo}`, e.message)
+            }
+            return null
+          },
+        )
+      : Promise.resolve(null)
+    opened
+      .then(
+        (result): Loaded | Promise<Loaded> =>
+          result ?? api.repos().then((r) => ({ list: r.repos, open: null })),
+      )
+      .then(({ list, open }) => {
+        setRepos(list)
         const last = loadLocal(
           'lastRepo',
           null,
           (value): value is string | null => value === null || typeof value === 'string',
         )
-        selectRepo(r.repos.find((x) => x.path === last)?.path ?? r.repos[0]?.path ?? null)
+        selectRepo(open ?? list.find((x) => x.path === last)?.path ?? list[0]?.path ?? null)
       })
-      .catch((e: Error) => toast.show('error', 'Could not load repositories', e.message))
-  }, [toast, selectRepo])
+      .catch((e: Error) => {
+        // The auth gate replaces the app with the pairing screen instead.
+        if (!(e instanceof UnauthorizedError)) {
+          toast.show('error', 'Could not load repositories', e.message)
+        }
+      })
+  }, [toast, selectRepo, initialRepo])
   useEffect(() => {
     if (repo) saveLocal('lastRepo', repo)
   }, [repo])

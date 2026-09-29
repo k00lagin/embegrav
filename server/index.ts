@@ -3,12 +3,19 @@ import { serveStatic } from '@hono/node-server/serve-static'
 import { Hono } from 'hono'
 import { streamSSE } from 'hono/streaming'
 import { existsSync } from 'node:fs'
-import { dirname, join, relative } from 'node:path'
+import { dirname, join, relative, resolve } from 'node:path'
 import { fileURLToPath } from 'node:url'
 import { spawn } from 'node:child_process'
 import type { FileDiffRequest, GraphRequest } from '../shared/types.ts'
 import { decodeActionRequest } from '../shared/actions.ts'
 import { runAction } from './actions.ts'
+import {
+  DEFAULT_PAIRING_TTL_MS,
+  bearerToken,
+  createPairingToken,
+  isValidSession,
+  redeemPairingToken,
+} from './auth.ts'
 import { browse, homeDirectory } from './browse.ts'
 import { GitError } from './git.ts'
 import {
@@ -28,36 +35,92 @@ import { subscribe } from './watcher.ts'
 // ---------------------------------------------------------------------------
 
 interface Cli {
+  command: 'serve' | 'pair'
   paths: string[]
   port: number
   host: string
   open: boolean
+  /** Pairing token lifetime in minutes (`pair` only) */
+  ttl: number
+  /** Repository to open through the pairing link (`pair` only) */
+  repo: string | null
 }
 
+const HELP = `Usage: embegrav [options] [path ...]
+       embegrav pair [--repo <path>] [--ttl <minutes>] [--port <n>] [--host <h>]
+
+Opens a Git Graph style web UI for the given repositories (default: current directory).
+If a path is not a repository, its immediate sub-directories are scanned for repositories.
+
+The API only answers paired browsers. "embegrav pair" prints a single-use pairing
+link; opening it stores a session in the browser. The server prints (and with
+--open, opens) such a link on startup. Links may carry ?repo=<path> to open a
+repository; paired browsers can open http://host:port/?repo=<path> directly.
+
+Options:
+  -p, --port <n>      Port to listen on / to put in the link (default 3210)
+      --host <h>      Host to bind / to put in the link (default 127.0.0.1)
+  -o, --open          Open the UI in the default browser
+                      (pair: open the pairing link)
+      --repo <path>   pair: repository to open with the link
+      --ttl <min>     pair: token lifetime in minutes (default 5)
+  -h, --help          Show this help
+
+Pairing tokens and sessions are stored in ~/.embegrav (override with EMBEGRAV_HOME);
+delete files in its sessions/ folder to revoke browsers.`
+
 function parseArgs(argv: string[]): Cli {
-  const cli: Cli = { paths: [], port: 3210, host: '127.0.0.1', open: false }
+  const cli: Cli = {
+    command: 'serve',
+    paths: [],
+    port: 3210,
+    host: '127.0.0.1',
+    open: false,
+    ttl: DEFAULT_PAIRING_TTL_MS / 60_000,
+    repo: null,
+  }
+  if (argv[0] === 'pair') {
+    cli.command = 'pair'
+    argv = argv.slice(1)
+  }
   for (let i = 0; i < argv.length; i++) {
     const a = argv[i]
     if (a === '--port' || a === '-p') cli.port = Number(argv[++i])
     else if (a.startsWith('--port=')) cli.port = Number(a.slice(7))
     else if (a === '--host') cli.host = argv[++i]
     else if (a === '--open' || a === '-o') cli.open = true
+    else if (a === '--repo') cli.repo = argv[++i] ?? null
+    else if (a === '--ttl') cli.ttl = Number(argv[++i])
     else if (a === '--help' || a === '-h') {
-      console.log(`Usage: embegrav [options] [path ...]
-
-Opens a Git Graph style web UI for the given repositories (default: current directory).
-If a path is not a repository, its immediate sub-directories are scanned for repositories.
-
-Options:
-  -p, --port <n>   Port to listen on (default 3210)
-      --host <h>   Host to bind (default 127.0.0.1)
-  -o, --open       Open the UI in the default browser
-  -h, --help       Show this help`)
+      console.log(HELP)
       process.exit(0)
     } else cli.paths.push(a)
   }
+  if (!(cli.ttl > 0)) {
+    console.error('--ttl must be a positive number of minutes')
+    process.exit(1)
+  }
   if (cli.paths.length === 0) cli.paths.push(process.cwd())
   return cli
+}
+
+function serverUrl(host: string, port: number): string {
+  const hostname = host === '0.0.0.0' || host === '::' ? 'localhost' : host
+  const authority = hostname.includes(':') && !hostname.startsWith('[') ? `[${hostname}]` : hostname
+  return `http://${authority}:${port}`
+}
+
+function pairingUrl(host: string, port: number, token: string, repo: string | null): string {
+  const url = new URL(serverUrl(host, port))
+  if (repo) url.searchParams.set('repo', repo)
+  // The fragment is never sent to the server, so the token stays out of request lines and logs.
+  url.hash = new URLSearchParams({ token }).toString()
+  return url.toString()
+}
+
+function formatExpiry(expiresAt: number): string {
+  const minutes = Math.round((expiresAt - Date.now()) / 60_000)
+  return `single use, expires in ${minutes} min`
 }
 
 // ---------------------------------------------------------------------------
@@ -73,6 +136,35 @@ api.onError((err, c) => {
     status,
   )
 })
+
+// The only unauthenticated endpoint: trade a pairing token for a session.
+api.post('/auth/pair', async (c) => {
+  const body = (await c.req.json().catch(() => null)) as { token?: unknown } | null
+  const session = await redeemPairingToken(body?.token, c.req.header('user-agent'))
+  if (!session) {
+    return c.json(
+      { error: 'The pairing token is invalid, expired or already used', code: 'unauthorized' },
+      401,
+    )
+  }
+  return c.json({ session })
+})
+
+api.use('*', async (c, next) => {
+  // EventSource cannot send headers, so the event stream takes the session as a query parameter.
+  const session =
+    bearerToken(c.req.header('authorization')) ??
+    (c.req.path === '/api/events' ? c.req.query('session') : undefined)
+  if (!(await isValidSession(session))) {
+    return c.json(
+      { error: 'This browser is not paired with the server', code: 'unauthorized' },
+      401,
+    )
+  }
+  await next()
+})
+
+api.post('/auth/session', (c) => c.json({ ok: true }))
 
 api.get('/repos', (c) => c.json({ repos: listRepos() }))
 
@@ -202,20 +294,40 @@ if (hasDist) {
   )
 }
 
+async function pair(cli: Cli) {
+  const repo = cli.repo && resolve(cli.repo)
+  const { token, expiresAt } = await createPairingToken(cli.ttl * 60_000)
+  console.log(`Pairing token: ${token} (${formatExpiry(expiresAt)})`)
+  const link = pairingUrl(cli.host, cli.port, token, repo)
+  console.log(`Open: ${link}`)
+  if (cli.open) openBrowser(link)
+}
+
 async function main() {
   const cli = parseArgs(process.argv.slice(2))
+  if (cli.command === 'pair') return pair(cli)
   for (const p of cli.paths) {
     const found = await registerPath(p)
     if (found.length === 0) console.warn(`No git repository found at ${p}`)
   }
   const repos = listRepos()
   serve({ fetch: app.fetch, port: cli.port, hostname: cli.host }, (info) => {
-    const url = `http://${cli.host === '0.0.0.0' ? 'localhost' : cli.host}:${info.port}`
+    const url = serverUrl(cli.host, info.port)
     console.log(`Embegrav listening on ${url}`)
     console.log(
       `Repositories (${repos.length}): ${repos.map((r) => r.path).join(', ') || '(none)'}`,
     )
-    if (cli.open && hasDist) openBrowser(url)
+    createPairingToken().then(
+      ({ token, expiresAt }) => {
+        const link = pairingUrl(cli.host, info.port, token, null)
+        console.log(`Pair a browser: ${link} (${formatExpiry(expiresAt)})`)
+        if (cli.open && hasDist) openBrowser(link)
+      },
+      (error: Error) => {
+        console.warn(`Could not create a pairing token: ${error.message}`)
+        if (cli.open && hasDist) openBrowser(url)
+      },
+    )
   })
 }
 

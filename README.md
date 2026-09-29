@@ -34,11 +34,42 @@ pnpm start -- C:\Git\my-repo D:\projects --port 4000 --open
 embegrav ~/projects --open
 ```
 
+### Pairing a browser and opening repositories by link
+
+The API only answers browsers paired with the server. On startup the server
+prints a single-use pairing link (and opens it with `--open`). Issue another
+one at any time:
+
+```bash
+embegrav pair                          # or: pnpm start -- pair
+embegrav pair --repo C:\Git\my-repo --ttl 10 --open
+# Pairing token: 7KQ2M9XHV4TR (single use, expires in 10 min)
+# Open: http://127.0.0.1:3210/?repo=C%3A%5CGit%5Cmy-repo#token=7KQ2M9XHV4TR
+```
+
+The token travels in the URL fragment (`#token=`), which browsers never send to
+the server, so it does not appear in request lines or logs. Opening the link
+trades the token for a session token that the browser keeps
+in `localStorage` and sends as `Authorization: Bearer …` with every request.
+If browser storage is blocked or full, the session stays in memory for the
+current tab; reloading the page requires pairing again.
+After that, `http://127.0.0.1:3210/?repo=<path>` opens (and registers) any
+repository without a new token. A browser without a valid session shows a form
+where a token can be pasted. Pass `--port` / `--host` to `pair` when the server
+does not use the defaults.
+
+Pairing tokens (5 minutes by default) and sessions are stored as SHA-256 file
+names under `~/.embegrav` (`EMBEGRAV_HOME` overrides it), so the CLI and a
+running server share them and sessions survive restarts. Delete files in
+`~/.embegrav/sessions/` to revoke browsers.
+
 During development run the API server and the Vite dev server together:
 
 ```bash
 pnpm dev              # API on :3210, UI with HMR on http://localhost:5173
 ```
+
+Pair the dev UI with `pnpm start -- pair --port 5173` (Vite proxies `/api`).
 
 Other scripts: `pnpm lint` (oxlint), `pnpm fmt` (oxfmt), `pnpm typecheck`,
 and `pnpm test` (behavioral regressions with Vitest).
@@ -158,10 +189,14 @@ src/
 
 ## API
 
-All endpoints are under `/api` and take JSON bodies:
+All endpoints are under `/api` and take JSON bodies. Every endpoint except
+`POST /auth/pair` requires `Authorization: Bearer <session>`; `GET /events`
+takes it as `?session=` because `EventSource` cannot send headers.
 
 | Endpoint             | Purpose                                |
 | -------------------- | -------------------------------------- |
+| `POST /auth/pair`    | trade a pairing token for a session    |
+| `POST /auth/session` | check the current session              |
 | `GET /repos`         | registered repositories                |
 | `POST /repos`        | register a path (`{ path }`)           |
 | `POST /graph`        | commits, refs, stashes, status, state  |

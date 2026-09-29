@@ -12,11 +12,49 @@ import type {
   RepoInfo,
   UncommittedDetails,
 } from '@shared/types'
+import { loadLocal } from './lib/settings'
+
+// Keep a usable session in this tab when browser storage is unavailable or full.
+let volatileSession: string | null | undefined
+
+/** The browser's session token, issued by the server in exchange for a pairing token. */
+export function getSession(): string | null {
+  if (volatileSession !== undefined) return volatileSession
+  return loadLocal(
+    'session',
+    null,
+    (value): value is string | null => value === null || typeof value === 'string',
+  )
+}
+
+export function setSession(session: string | null): void {
+  try {
+    localStorage.setItem('embegrav.session', JSON.stringify(session))
+    volatileSession = undefined
+  } catch {
+    volatileSession = session
+  }
+}
+
+/** The server rejected the request because this browser is not paired. */
+export class UnauthorizedError extends Error {}
+
+const unauthorizedListeners = new Set<() => void>()
+
+/** Called whenever an API request is rejected for a missing or revoked session. */
+export function onUnauthorized(listener: () => void): () => void {
+  unauthorizedListeners.add(listener)
+  return () => unauthorizedListeners.delete(listener)
+}
 
 async function request<T>(method: string, url: string, body?: unknown): Promise<T> {
+  const session = getSession()
+  const headers: Record<string, string> = {}
+  if (body !== undefined) headers['content-type'] = 'application/json'
+  if (session) headers.authorization = `Bearer ${session}`
   const res = await fetch(url, {
     method,
-    headers: body !== undefined ? { 'content-type': 'application/json' } : undefined,
+    headers,
     body: body !== undefined ? JSON.stringify(body) : undefined,
   })
   const text = await res.text()
@@ -31,6 +69,13 @@ async function request<T>(method: string, url: string, body?: unknown): Promise<
       json && typeof json === 'object' && 'error' in json
         ? String((json as { error: unknown }).error)
         : text || res.statusText
+    if (res.status === 401) {
+      // A rejected pairing token is reported to the caller, not as a lost session.
+      if (url !== PAIR_URL && session === getSession()) {
+        for (const listener of unauthorizedListeners) listener()
+      }
+      throw new UnauthorizedError(msg)
+    }
     throw new Error(msg)
   }
   return json as T
@@ -38,7 +83,13 @@ async function request<T>(method: string, url: string, body?: unknown): Promise<
 
 const post = <T>(url: string, body: unknown) => request<T>('POST', url, body)
 
+const PAIR_URL = '/api/auth/pair'
+
 export const api = {
+  /** Trade a single-use pairing token for a session token. */
+  pair: (token: string) => post<{ session: string }>(PAIR_URL, { token }),
+  /** Resolves when the stored session is accepted by the server. */
+  checkSession: () => post<{ ok: true }>('/api/auth/session', {}),
   repos: () => request<{ repos: RepoInfo[] }>('GET', '/api/repos'),
   addRepo: (path: string) => post<{ repos: RepoInfo[]; added: RepoInfo[] }>('/api/repos', { path }),
   removeRepo: (path: string) => request<{ repos: RepoInfo[] }>('DELETE', '/api/repos', { path }),
@@ -61,7 +112,9 @@ export const api = {
 
 /** Subscribe to repository change events (server-sent events). */
 export function subscribeRepoEvents(repo: string, onChange: () => void): () => void {
-  const es = new EventSource(`/api/events?repo=${encodeURIComponent(repo)}`)
+  // EventSource cannot send an Authorization header.
+  const params = new URLSearchParams({ repo, session: getSession() ?? '' })
+  const es = new EventSource(`/api/events?${params}`)
   es.addEventListener('change', () => onChange())
   return () => es.close()
 }

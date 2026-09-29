@@ -47,7 +47,12 @@ it('releases an SSE subscription when the client disconnects during watcher init
   try {
     await import('../server/index.ts')
     await vi.waitFor(() => expect(serve).toHaveBeenCalledTimes(1))
-    const response = await fetchRequest(new Request('http://localhost/api/events?repo=test-repo'))
+    const { createPairingToken, redeemPairingToken } = await import('../server/auth.ts')
+    const session = await redeemPairingToken((await createPairingToken()).token)
+    const response = await fetchRequest(
+      new Request(`http://localhost/api/events?repo=test-repo&session=${session}`),
+    )
+    expect(response.status).toBe(200)
     expect(subscribe).toHaveBeenCalledTimes(1)
     await response.body!.cancel()
     const unsubscribe = vi.fn()
@@ -70,12 +75,15 @@ it('runs the linked CLI help from an unrelated directory', async () => {
   }
 })
 
-it('handles an asynchronous browser launcher error without crashing the server', async () => {
+it.each([
+  ['127.0.0.1', 'http://127.0.0.1:3210'],
+  ['::1', 'http://[::1]:3210'],
+])('starts on %s and handles browser launcher errors without crashing', async (host, origin) => {
   vi.resetModules()
   const launcher = Object.assign(new EventEmitter(), { unref: vi.fn() })
   const spawn = vi.fn(() => launcher)
   const warn = vi.spyOn(console, 'warn').mockImplementation(() => {})
-  vi.spyOn(console, 'log').mockImplementation(() => {})
+  const log = vi.spyOn(console, 'log').mockImplementation(() => {})
   vi.doMock('node:child_process', async (original) => ({
     ...(await original<typeof import('node:child_process')>()),
     spawn,
@@ -95,10 +103,13 @@ it('handles an asynchronous browser launcher error without crashing the server',
     removeRepo: vi.fn(),
   }))
   const argv = process.argv
-  process.argv = [process.execPath, 'server/index.ts', '--open', 'test-repo']
+  process.argv = [process.execPath, 'server/index.ts', '--open', '--host', host, 'test-repo']
   try {
     await import('../server/index.ts')
     await vi.waitFor(() => expect(spawn).toHaveBeenCalledTimes(1))
+    // The opened page pairs itself with a fresh token.
+    expect(String(spawn.mock.calls[0])).toContain(`${origin}/#token=`)
+    expect(log).toHaveBeenCalledWith(`Embegrav listening on ${origin}`)
     expect(launcher.unref).toHaveBeenCalledTimes(1)
     expect(() => launcher.emit('error', new Error('launcher unavailable'))).not.toThrow()
     expect(warn).toHaveBeenCalledWith('Could not open browser: launcher unavailable')
