@@ -29,6 +29,8 @@ import {
 } from './repo.ts'
 import { getRepo, listRepos, registerPath, removeRepo } from './repos.ts'
 import { subscribe } from './watcher.ts'
+import { revealInFileExplorer, workingRevealPath } from './explorer.ts'
+import { isLocalRequest } from './local.ts'
 
 // ---------------------------------------------------------------------------
 // CLI
@@ -168,6 +170,8 @@ api.post('/auth/session', (c) => c.json({ ok: true }))
 
 api.get('/repos', (c) => c.json({ repos: listRepos() }))
 
+api.get('/capabilities', (c) => c.json({ revealInFileExplorer: isLocalRequest(c) }))
+
 api.post('/repos', async (c) => {
   const body = (await c.req.json()) as { path?: string }
   if (!body.path) return c.json({ error: 'path is required' }, 400)
@@ -180,6 +184,21 @@ api.delete('/repos', async (c) => {
   const body = (await c.req.json()) as { path?: string }
   if (body.path) removeRepo(body.path)
   return c.json({ repos: listRepos() })
+})
+
+api.post('/repos/reveal', async (c) => {
+  if (!isLocalRequest(c)) {
+    return c.json(
+      { error: 'Reveal in File Explorer is only available on the server computer' },
+      403,
+    )
+  }
+  const body = (await c.req.json()) as { path?: unknown; filePath?: unknown }
+  const repo = getRepo(body.path)
+  const target =
+    body.filePath === undefined ? repo.path : await workingRevealPath(repo.path, body.filePath)
+  await revealInFileExplorer(target)
+  return c.json({ ok: true })
 })
 
 api.get('/browse', async (c) => c.json(await browse(c.req.query('path') ?? '')))

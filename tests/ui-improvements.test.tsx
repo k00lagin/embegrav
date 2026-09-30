@@ -69,6 +69,7 @@ beforeEach(() => {
   )
   Element.prototype.scrollIntoView = () => {}
   vi.spyOn(api, 'repos').mockResolvedValue({ repos: [{ path: 'R', name: 'Repo R' }] })
+  vi.spyOn(api, 'capabilities').mockResolvedValue({ revealInFileExplorer: true })
   vi.spyOn(api, 'graph').mockResolvedValue(graph)
   vi.spyOn(api, 'stats').mockResolvedValue({ stats: {} })
   vi.spyOn(api, 'commit').mockImplementation(async (_repo, hash) => details(hash))
@@ -77,6 +78,7 @@ beforeEach(() => {
 })
 afterEach(() => {
   cleanup()
+  vi.useRealTimers()
   vi.restoreAllMocks()
   vi.unstubAllGlobals()
 })
@@ -605,11 +607,132 @@ it('offers undo after removing a repository from the list', async () => {
   vi.spyOn(api, 'addRepo').mockResolvedValue({ repos: [restored], added: [restored] })
   render(<App />)
   fireEvent.click(await screen.findByRole('button', { name: 'Repo R' }))
-  fireEvent.click(screen.getByRole('button', { name: 'Remove from list' }))
+  expect(screen.queryByRole('button', { name: 'Remove from list' })).toBeNull()
+  fireEvent.contextMenu(screen.getByRole('button', { name: 'Repo RR' }), {
+    clientX: 20,
+    clientY: 40,
+  })
+  fireEvent.click(screen.getByRole('menuitem', { name: 'Remove from list' }))
   await screen.findByText(/No repositories registered/)
   fireEvent.click(screen.getByRole('button', { name: 'Undo' }))
   await waitFor(() => expect(api.addRepo).toHaveBeenCalledWith('R'))
   expect(await screen.findByText('Fix typo')).toBeTruthy()
+})
+
+it('reveals the repository under the context menu without switching repositories', async () => {
+  vi.mocked(api.repos).mockResolvedValue({
+    repos: [
+      { path: 'R', name: 'Repo R' },
+      { path: 'S', name: 'Repo S' },
+    ],
+  })
+  const reveal = vi.spyOn(api, 'revealRepo').mockResolvedValue({ ok: true })
+  render(<App />)
+  fireEvent.click(await screen.findByRole('button', { name: 'Repo R' }))
+  fireEvent.contextMenu(screen.getByText('S'), { clientX: 20, clientY: 40 })
+  fireEvent.click(screen.getByRole('menuitem', { name: 'Reveal in File Explorer' }))
+  await waitFor(() => expect(reveal).toHaveBeenCalledWith('S'))
+  expect(screen.getByRole('button', { name: 'Repo R' })).toBeTruthy()
+  expect(screen.queryByRole('menu')).toBeNull()
+})
+
+it('copies a repository path through the keyboard context menu', async () => {
+  const writeText = vi.fn().mockResolvedValue(undefined)
+  Object.defineProperty(navigator, 'clipboard', { configurable: true, value: { writeText } })
+  render(<App />)
+  fireEvent.click(await screen.findByRole('button', { name: 'Repo R' }))
+  const item = screen.getByRole('button', { name: 'Repo RR' })
+  item.focus()
+  fireEvent.keyDown(item, { key: 'F10', shiftKey: true })
+  fireEvent.click(screen.getByRole('menuitem', { name: 'Copy Path' }))
+  await waitFor(() => expect(writeText).toHaveBeenCalledWith('R'))
+  expect(await screen.findByText('Repository path copied to clipboard')).toBeTruthy()
+})
+
+it('keeps the repository dropdown and its filter while using a context menu', async () => {
+  render(<App />)
+  fireEvent.click(await screen.findByRole('button', { name: 'Repo R' }))
+  const search = screen.getByRole('textbox', { name: 'Search repositories' })
+  fireEvent.change(search, { target: { value: 'Repo' } })
+  fireEvent.contextMenu(screen.getByRole('button', { name: 'Repo RR' }))
+  expect(screen.getByRole('textbox', { name: 'Search repositories' })).toBe(search)
+  const item = screen.getByRole('menuitem', { name: 'Copy Path' })
+  fireEvent.mouseDown(item)
+  expect(screen.getByRole('textbox', { name: 'Search repositories' })).toBe(search)
+  fireEvent.keyDown(item, { key: 'Escape' })
+  expect(screen.queryByRole('menu')).toBeNull()
+  expect((search as HTMLInputElement).value).toBe('Repo')
+  expect(screen.getByRole('textbox', { name: 'Search repositories' })).toBe(search)
+})
+
+it('reports file explorer errors', async () => {
+  vi.spyOn(api, 'revealRepo').mockRejectedValue(new Error('Explorer unavailable'))
+  render(<App />)
+  fireEvent.click(await screen.findByRole('button', { name: 'Repo R' }))
+  fireEvent.contextMenu(screen.getByRole('button', { name: 'Repo RR' }), {
+    clientX: 20,
+    clientY: 40,
+  })
+  fireEvent.click(screen.getByRole('menuitem', { name: 'Reveal in File Explorer' }))
+  expect(await screen.findByText('Could not reveal repository')).toBeTruthy()
+  expect(screen.getByText('Explorer unavailable')).toBeTruthy()
+})
+
+it('disables revealing repositories when the server does not allow local actions', async () => {
+  vi.mocked(api.capabilities).mockResolvedValue({ revealInFileExplorer: false })
+  const reveal = vi.spyOn(api, 'revealRepo')
+  render(<App />)
+  fireEvent.click(await screen.findByRole('button', { name: 'Repo R' }))
+  fireEvent.contextMenu(screen.getByRole('button', { name: 'Repo RR' }))
+  const item = screen.getByRole('menuitem', { name: 'Reveal in File Explorer' })
+  expect(item.getAttribute('aria-disabled')).toBe('true')
+  fireEvent.click(item)
+  expect(reveal).not.toHaveBeenCalled()
+  expect(
+    screen.getByRole('menuitem', { name: 'Copy Path' }).getAttribute('aria-disabled'),
+  ).toBeNull()
+})
+
+it.each([true, false])('recovers capabilities after a temporary failure (%s)', async (enabled) => {
+  vi.useFakeTimers()
+  vi.mocked(api.capabilities)
+    .mockRejectedValueOnce(new Error('Failed to fetch'))
+    .mockResolvedValue({ revealInFileExplorer: enabled })
+  const reveal = vi.spyOn(api, 'revealRepo').mockResolvedValue({ ok: true })
+  await act(async () => {
+    render(<App />)
+  })
+  fireEvent.click(screen.getByRole('button', { name: 'Repo R' }))
+  fireEvent.contextMenu(screen.getByRole('button', { name: 'Repo RR' }))
+  const unavailable = screen.getByRole('menuitem', { name: 'Reveal in File Explorer' })
+  expect(unavailable.getAttribute('aria-disabled')).toBe('true')
+  fireEvent.keyDown(unavailable, { key: 'Escape' })
+
+  await act(async () => {
+    await vi.advanceTimersByTimeAsync(5000)
+  })
+  expect(api.capabilities).toHaveBeenCalledTimes(2)
+  fireEvent.contextMenu(screen.getByRole('button', { name: 'Repo RR' }))
+  const recovered = screen.getByRole('menuitem', { name: 'Reveal in File Explorer' })
+  expect(recovered.getAttribute('aria-disabled')).toBe(enabled ? null : 'true')
+  await act(async () => fireEvent.click(recovered))
+  expect(reveal).toHaveBeenCalledTimes(enabled ? 1 : 0)
+  await act(async () => {
+    await vi.advanceTimersByTimeAsync(15_000)
+  })
+  expect(api.capabilities).toHaveBeenCalledTimes(2)
+})
+
+it('cancels a pending capabilities retry when the app unmounts', async () => {
+  vi.useFakeTimers()
+  vi.mocked(api.capabilities).mockRejectedValue(new Error('Failed to fetch'))
+  const { unmount } = render(<App />)
+  await act(async () => {})
+  unmount()
+  await act(async () => {
+    await vi.advanceTimersByTimeAsync(15_000)
+  })
+  expect(api.capabilities).toHaveBeenCalledTimes(1)
 })
 
 it('offers merge and rebase when a branch label is dropped on the current branch', async () => {

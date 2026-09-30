@@ -5,6 +5,7 @@ import { MenuItems, handleMenuKeyDown, type MenuEntry } from './MenuItems'
 export type { MenuItem, MenuEntry } from './MenuItems'
 
 export interface ContextMenuState {
+  source?: 'repository'
   x: number
   y: number
   placement?: 'above'

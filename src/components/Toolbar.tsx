@@ -38,7 +38,8 @@ interface Props {
   repo: string | null
   onSelectRepo: (path: string) => void
   onAddRepo: () => void
-  onRemoveRepo: (path: string) => void
+  onRepoContextMenu: (path: string, x: number, y: number) => void
+  repoContextMenuOpen?: boolean
   data: GraphData | null
   branches: string[] | null
   onBranchesChange: (b: string[] | null) => void
@@ -87,48 +88,18 @@ export function Toolbar(p: Props) {
         icon={<IconFolderGit2 className="w-4 h-4 shrink-0" />}
         label={current?.name ?? 'Select repository'}
         title={current?.path ?? 'Repository'}
+        panelClassName="w-[360px] max-w-[calc(100vw-16px)] !min-w-0 overflow-x-hidden"
+        contextMenuOpen={p.repoContextMenuOpen}
       >
         {(close) => (
-          <div className="py-1 min-w-[300px]">
-            {p.repos.map((r) => (
-              <div key={r.path} className="flex items-stretch">
-                <DropdownItem
-                  className="flex-1"
-                  active={r.path === p.repo}
-                  onClick={() => {
-                    close()
-                    p.onSelectRepo(r.path)
-                  }}
-                >
-                  <span className="flex flex-col min-w-0">
-                    <span className="truncate">{r.name}</span>
-                    <span className="text-xs opacity-60 truncate mono">{r.path}</span>
-                  </span>
-                </DropdownItem>
-                <button
-                  type="button"
-                  className="icon-btn self-center ml-3 mr-1 hover:!text-danger"
-                  title="Remove from list"
-                  onClick={(e) => {
-                    e.stopPropagation()
-                    close()
-                    p.onRemoveRepo(r.path)
-                  }}
-                >
-                  <IconX className="w-3.5 h-3.5" />
-                </button>
-              </div>
-            ))}
-            <div className="context-menu-sep" />
-            <DropdownItem
-              onClick={() => {
-                close()
-                p.onAddRepo()
-              }}
-            >
-              <IconPlus className="w-4 h-4" /> Add repository…
-            </DropdownItem>
-          </div>
+          <RepositoryFilter
+            repos={p.repos}
+            repo={p.repo}
+            onSelectRepo={p.onSelectRepo}
+            onAddRepo={p.onAddRepo}
+            onRepoContextMenu={p.onRepoContextMenu}
+            close={close}
+          />
         )}
       </Dropdown>
 
@@ -341,6 +312,93 @@ export function Toolbar(p: Props) {
       <button type="button" className="icon-btn" title="Settings" onClick={p.onOpenSettings}>
         <IconSettings className="w-4 h-4" />
       </button>
+    </div>
+  )
+}
+
+function RepositoryFilter(
+  p: Pick<Props, 'repos' | 'repo' | 'onSelectRepo' | 'onAddRepo' | 'onRepoContextMenu'> & {
+    close: () => void
+  },
+) {
+  const [query, setQuery] = useState('')
+  const input = useRef<HTMLInputElement>(null)
+  const needle = query.trim().toLowerCase()
+  const filteredRepos = p.repos.filter(
+    (r) => r.name.toLowerCase().includes(needle) || r.path.toLowerCase().includes(needle),
+  )
+
+  useEffect(() => {
+    input.current?.focus()
+  }, [])
+
+  return (
+    <div className="pb-1 min-w-0 w-full">
+      <div className="sticky top-0 z-10 px-2 pt-2 pb-1.5 bg-[var(--vscode-dropdown-background)] border-b border-border">
+        <input
+          ref={input}
+          type="text"
+          className="w-full"
+          placeholder="Search repositories"
+          aria-label="Search repositories"
+          value={query}
+          onChange={(e) => setQuery(e.target.value)}
+          onKeyDown={(e) => {
+            if (e.key !== 'Enter') return
+            e.preventDefault()
+            const first = filteredRepos[0]
+            if (first) {
+              p.close()
+              p.onSelectRepo(first.path)
+            }
+          }}
+        />
+      </div>
+      {filteredRepos.map((r) => (
+        <div
+          key={r.path}
+          onContextMenu={(e) => {
+            e.preventDefault()
+            e.stopPropagation()
+            p.onRepoContextMenu(r.path, e.clientX, e.clientY)
+          }}
+          onKeyDown={(e) => {
+            if (e.key !== 'ContextMenu' && !(e.shiftKey && e.key === 'F10')) return
+            e.preventDefault()
+            e.stopPropagation()
+            const rect = e.currentTarget.getBoundingClientRect()
+            p.onRepoContextMenu(r.path, rect.left, rect.bottom)
+          }}
+        >
+          <DropdownItem
+            className="min-w-0"
+            active={r.path === p.repo}
+            onClick={() => {
+              p.close()
+              p.onSelectRepo(r.path)
+            }}
+          >
+            <span className="flex flex-col min-w-0" title={r.path}>
+              <span className="truncate">{r.name}</span>
+              <span className="text-xs opacity-60 truncate mono">{r.path}</span>
+            </span>
+          </DropdownItem>
+        </div>
+      ))}
+      {filteredRepos.length === 0 && (
+        <div className="px-3 py-1 text-fg-dim">
+          {needle ? 'No matching repositories' : 'No repositories'}
+        </div>
+      )}
+      <div className="context-menu-sep" />
+      <DropdownItem
+        onClick={() => {
+          p.close()
+          p.onAddRepo()
+        }}
+      >
+        <IconPlus className="w-4 h-4" /> Add repository…
+      </DropdownItem>
     </div>
   )
 }

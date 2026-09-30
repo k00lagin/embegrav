@@ -143,6 +143,45 @@ it('synchronizes sidebar selection with file navigation and keeps the sidebar op
   expect(screen.queryByRole('complementary')).toBeNull()
 })
 
+it.each([
+  ['View Diff', 'diff', 'commit'],
+  ['View File at this Revision', 'after', 'commit'],
+  ['View Diff with Working File', 'diff', 'WORKING'],
+  ['Open Working File', 'working', 'WORKING'],
+])('keeps file navigation after the sidebar action %s', async (action, view, revision) => {
+  const { container } = render(<View value={{ ...target, siblings }} />)
+  await screen.findByTestId('patch')
+  fireEvent.click(screen.getByRole('button', { name: 'Toggle files sidebar' }))
+  const root = () => container.querySelector('file-tree-container')!.shadowRoot!
+  await waitFor(() => expect(root().querySelector('[data-item-path="src/other.ts"]')).toBeTruthy())
+  fireEvent.contextMenu(root().querySelector('[data-item-path="src/other.ts"]')!)
+  fireEvent.click(await screen.findByRole('menuitem', { name: action }))
+  expect(screen.getByRole('combobox', { name: 'File view' })).toHaveProperty('value', view)
+  await waitFor(() => {
+    if (view === 'diff') {
+      expect(api.fileDiff).toHaveBeenLastCalledWith(
+        expect.objectContaining({ path: 'src/other.ts', to: revision }),
+      )
+    } else {
+      expect(api.fileContent).toHaveBeenLastCalledWith('R', revision, 'src/other.ts')
+    }
+    expect(root().querySelector('[data-item-path="src/new.ts"]')).toBeTruthy()
+    expect(root().querySelector('[data-item-path="src/deleted.ts"]')).toBeTruthy()
+  })
+  fireEvent.click(screen.getByRole('button', { name: 'Switch file (src/other.ts)' }))
+  expect(screen.getAllByRole('menuitem')).toHaveLength(siblings.length)
+  fireEvent.click(screen.getByRole('menuitem', { name: /src\/new\.ts\s*R/ }))
+  await waitFor(() => {
+    if (view === 'diff') {
+      expect(api.fileDiff).toHaveBeenLastCalledWith(
+        expect.objectContaining({ path: 'src/new.ts', to: revision }),
+      )
+    } else {
+      expect(api.fileContent).toHaveBeenLastCalledWith('R', revision, 'src/new.ts')
+    }
+  })
+})
+
 it('uses the previous version for deleted files and preserves comparisons with working files', async () => {
   const { rerender } = render(<View value={{ ...target, siblings, view: 'after' }} />)
   await screen.findByTestId('full-file')
@@ -229,6 +268,28 @@ function entry(items: MenuEntry[], label: string): MenuItem {
   if (!item) throw new Error(`Missing menu item: ${label}`)
   return item
 }
+
+it.each([true, false])('offers local-only Reveal for files and folders (%s)', (enabled) => {
+  const reveal = vi.fn()
+  const menuFor = createFileMenu(
+    '/repo',
+    () => target,
+    vi.fn(),
+    vi.fn(async () => {}),
+    undefined,
+    { enabled, onReveal: reveal },
+  )
+  const file = entry(menuFor(target.file, target.file.path, false), 'Reveal in File Explorer')
+  const folder = entry(menuFor(undefined, 'src', true), 'Reveal in File Explorer')
+  expect(file.disabled).toBe(!enabled)
+  expect(folder.disabled).toBe(!enabled)
+  if (enabled) {
+    file.onClick()
+    expect(reveal).toHaveBeenLastCalledWith(target.file.path)
+    folder.onClick()
+    expect(reveal).toHaveBeenLastCalledWith('src')
+  }
+})
 
 it('compares the selected revision at its current path, and copies native absolute and relative paths', () => {
   const open = vi.fn()

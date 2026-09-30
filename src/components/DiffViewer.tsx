@@ -8,7 +8,7 @@ import { useTheme } from '@/theme/ThemeProvider'
 import { shikiThemeFor } from '@/theme/vscode'
 import { ChangedFilesTree } from './ChangedFilesTree'
 import { ContextMenu, type ContextMenuState } from './ContextMenu'
-import { withWorkingFile } from './fileMenu'
+import { createFileMenu, withWorkingFile } from './fileMenu'
 import IconChevronDown from '~icons/lucide/chevron-down'
 import IconPanelRight from '~icons/lucide/panel-right'
 import IconCheck from '~icons/lucide/check'
@@ -43,7 +43,9 @@ interface Props {
   diffStyle: 'unified' | 'split'
   onDiffStyleChange: (s: 'unified' | 'split') => void
   onClose: () => void
-  actions?: Pick<RepoActions, 'run' | 'isRunning'>
+  actions?: Pick<RepoActions, 'run' | 'isRunning'> & Partial<Pick<RepoActions, 'copy'>>
+  canReveal?: boolean
+  onRevealPath?: (path: string) => void
   version?: number
 }
 
@@ -65,6 +67,8 @@ export function DiffViewer({
   onDiffStyleChange,
   onClose,
   actions,
+  canReveal = false,
+  onRevealPath = () => {},
   version = 0,
 }: Props) {
   const [selection, setSelection] = useState<{ source: DiffTarget; target: DiffTarget } | null>(
@@ -502,6 +506,20 @@ export function DiffViewer({
                 onOpenFile={selectFile}
                 selectedPath={target.file.path}
                 fillHeight
+                menuFor={createFileMenu(
+                  repo,
+                  (file) => ({
+                    ...(siblings.find((item) => item.file.path === file.path) ?? target),
+                    siblings,
+                  }),
+                  (next) => {
+                    setSelection({ source: initialTarget, target: next })
+                    setViewState({ target: next, view: next.view ?? 'diff' })
+                  },
+                  actions?.copy ?? ((text) => navigator.clipboard.writeText(text)),
+                  undefined,
+                  { enabled: canReveal, onReveal: onRevealPath },
+                )}
               />
             </div>
           </aside>

@@ -253,6 +253,9 @@ it('shows the pairing screen when the server rejects the browser and resumes aft
         added: [{ path: 'R', name: 'Repo R' }],
       })
     }
+    if (url === '/api/capabilities' && paired) {
+      return json({ revealInFileExplorer: true })
+    }
     return json({ error: 'This browser is not paired with the server' }, 401)
   })
   vi.stubGlobal('fetch', fetch)

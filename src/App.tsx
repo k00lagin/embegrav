@@ -8,6 +8,7 @@ import {
   type MouseEvent,
 } from 'react'
 import type { GitCommit, GraphRequest, RepoInfo } from '@shared/types'
+import { isLoopbackHost } from '@shared/local'
 import { UnauthorizedError, api, subscribeRepoEvents } from './api'
 import { layoutGraph } from './graph/layout'
 import { UNCOMMITTED, pluralize, shortHash } from './lib/format'
@@ -39,6 +40,9 @@ import IconArrowDown from '~icons/lucide/arrow-down'
 import IconX from '~icons/lucide/x'
 import IconCheck from '~icons/lucide/check'
 import IconArchive from '~icons/lucide/archive'
+import IconFolderOpen from '~icons/lucide/folder-open'
+import IconCopy from '~icons/lucide/copy'
+import IconTrash2 from '~icons/lucide/trash-2'
 
 const DEFAULT_SPLIT_WIDTH = 520
 
@@ -61,6 +65,28 @@ function Main({ initialRepo }: { initialRepo: string | null }) {
 
   // ----- repositories ------------------------------------------------------
   const [repos, setRepos] = useState<RepoInfo[]>([])
+  const [canRevealRepo, setCanRevealRepo] = useState(false)
+  useEffect(() => {
+    if (!isLoopbackHost(window.location.hostname)) return
+    let cancelled = false
+    let retryTimer: ReturnType<typeof setTimeout> | undefined
+    const load = () => {
+      void api.capabilities().then(
+        (capabilities) => {
+          if (!cancelled) setCanRevealRepo(capabilities.revealInFileExplorer)
+        },
+        () => {
+          // Retry transport/server failures, but stop after a successful capability check.
+          if (!cancelled) retryTimer = setTimeout(load, 5000)
+        },
+      )
+    }
+    load()
+    return () => {
+      cancelled = true
+      clearTimeout(retryTimer)
+    }
+  }, [])
   const [repo, setRepo] = useState<string | null>(null)
   const activeRepo = useRef<string | null>(null)
   const [menu, setMenu] = useState<ContextMenuState | null>(null)
@@ -460,6 +486,40 @@ function Main({ initialRepo }: { initialRepo: string | null }) {
   }, [selected, compare, rows])
 
   // ----- context menus -----------------------------------------------------
+  const revealRepo = async (path: string, filePath?: string) => {
+    try {
+      if (filePath === undefined) await api.revealRepo(path)
+      else await api.revealRepo(path, filePath)
+    } catch (e) {
+      toast.show('error', 'Could not reveal repository', (e as Error).message)
+    }
+  }
+  const onRepoContextMenu = (path: string, x: number, y: number) => {
+    setMenu({
+      source: 'repository',
+      x,
+      y,
+      items: [
+        {
+          label: 'Reveal in File Explorer',
+          icon: <IconFolderOpen />,
+          disabled: !canRevealRepo,
+          onClick: () => void revealRepo(path),
+        },
+        {
+          label: 'Copy Path',
+          icon: <IconCopy />,
+          onClick: () => void actions.copy(path, 'Repository path'),
+        },
+        'separator',
+        {
+          label: 'Remove from list',
+          icon: <IconTrash2 />,
+          onClick: () => void removeRepo(path),
+        },
+      ],
+    })
+  }
   const openMenu = (e: MouseEvent | ReactKeyboardEvent, items: MenuEntry[]) => {
     if (items.length === 0) return
     const rect = e.currentTarget.getBoundingClientRect()
@@ -689,6 +749,8 @@ function Main({ initialRepo }: { initialRepo: string | null }) {
         data={data}
         version={version}
         actions={actions}
+        canReveal={canRevealRepo}
+        onRevealPath={(path) => void revealRepo(repo, path)}
         layout={layout}
         onOpenDiff={setDiff}
         onSelectCommit={(h) => void goToCommit(h)}
@@ -716,7 +778,8 @@ function Main({ initialRepo }: { initialRepo: string | null }) {
         repo={repo}
         onSelectRepo={selectRepo}
         onAddRepo={addRepo}
-        onRemoveRepo={(p) => void removeRepo(p)}
+        onRepoContextMenu={onRepoContextMenu}
+        repoContextMenuOpen={menu?.source === 'repository'}
         data={data}
         branches={branches}
         onBranchesChange={setBranches}
@@ -917,6 +980,8 @@ function Main({ initialRepo }: { initialRepo: string | null }) {
             key={`${repo}:${diff.from}:${diff.to}:${diff.file.path}`}
             repo={repo}
             target={diff}
+            canReveal={canRevealRepo}
+            onRevealPath={(path) => void revealRepo(repo, path)}
             actions={actions}
             version={version}
             diffStyle={settings.diffStyle}

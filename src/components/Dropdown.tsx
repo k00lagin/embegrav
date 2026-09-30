@@ -7,21 +7,34 @@ interface Props {
   title?: string
   className?: string
   align?: 'left' | 'right'
+  panelClassName?: string
+  contextMenuOpen?: boolean
   children: (close: () => void) => ReactNode
 }
 
 /** A toolbar button that opens a floating panel below it. */
-export function Dropdown({ label, icon, title, className = '', align = 'left', children }: Props) {
+export function Dropdown({
+  label,
+  icon,
+  title,
+  className = '',
+  align = 'left',
+  panelClassName = '',
+  contextMenuOpen = false,
+  children,
+}: Props) {
   const [open, setOpen] = useState(false)
   const ref = useRef<HTMLDivElement>(null)
 
   useEffect(() => {
     if (!open) return
     const onDown = (e: MouseEvent) => {
+      if (contextMenuOpen && e.target instanceof Element && e.target.closest('.context-menu'))
+        return
       if (ref.current && !ref.current.contains(e.target as Node)) setOpen(false)
     }
     const onKey = (e: KeyboardEvent) => {
-      if (e.key === 'Escape') setOpen(false)
+      if (e.key === 'Escape' && !contextMenuOpen) setOpen(false)
     }
     window.addEventListener('mousedown', onDown)
     window.addEventListener('keydown', onKey)
@@ -29,7 +42,7 @@ export function Dropdown({ label, icon, title, className = '', align = 'left', c
       window.removeEventListener('mousedown', onDown)
       window.removeEventListener('keydown', onKey)
     }
-  }, [open])
+  }, [open, contextMenuOpen])
 
   return (
     <div ref={ref} className={`relative ${className}`}>
@@ -46,7 +59,10 @@ export function Dropdown({ label, icon, title, className = '', align = 'left', c
         <IconChevronDown className="w-3.5 h-3.5 opacity-70" />
       </button>
       {open && (
-        <div className="dropdown-panel mt-1" style={align === 'right' ? { right: 0 } : { left: 0 }}>
+        <div
+          className={`dropdown-panel mt-1 ${panelClassName}`}
+          style={align === 'right' ? { right: 0 } : { left: 0 }}
+        >
           {children(() => setOpen(false))}
         </div>
       )}

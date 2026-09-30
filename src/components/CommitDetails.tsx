@@ -44,6 +44,8 @@ interface Props {
   /** Bumped whenever the graph reloads, so details refresh too */
   version: number
   actions: RepoActions
+  canReveal?: boolean
+  onRevealPath?: (path: string) => void
   layout?: DetailsLayout
   onOpenDiff: (target: DiffTarget) => void
   onSelectCommit: (hash: string) => void
@@ -164,6 +166,8 @@ function CommitView({
   actions,
   onOpenDiff,
   onSelectCommit,
+  canReveal = false,
+  onRevealPath = () => {},
   layout,
 }: Props & { hash: string; layout: DetailsLayout }) {
   const load = useCallback(() => api.commit(repo, hash), [repo, hash])
@@ -280,7 +284,10 @@ function CommitView({
             maxRows={cls.treeRows}
             emptyText="No file changes in this commit"
             onOpenFile={(file) => onOpenDiff(targetFor(file))}
-            menuFor={createFileMenu(repo, targetFor, onOpenDiff, actions.copy)}
+            menuFor={createFileMenu(repo, targetFor, onOpenDiff, actions.copy, undefined, {
+              enabled: canReveal,
+              onReveal: onRevealPath,
+            })}
           />
         </div>
       </div>
@@ -295,6 +302,8 @@ function CompareView({
   from,
   to,
   version,
+  canReveal = false,
+  onRevealPath = () => {},
   actions,
   onOpenDiff,
   layout,
@@ -351,7 +360,10 @@ function CompareView({
             maxRows={cls.treeRows}
             emptyText="No differences"
             onOpenFile={(file) => onOpenDiff(targetFor(file))}
-            menuFor={createFileMenu(repo, targetFor, onOpenDiff, actions.copy)}
+            menuFor={createFileMenu(repo, targetFor, onOpenDiff, actions.copy, undefined, {
+              enabled: canReveal,
+              onReveal: onRevealPath,
+            })}
           />
         </div>
       </div>
@@ -363,6 +375,8 @@ function CompareView({
 
 function UncommittedView({
   repo,
+  canReveal = false,
+  onRevealPath = () => {},
   data,
   version,
   actions,
@@ -702,7 +716,10 @@ function UncommittedView({
             emptyText="No staged changes"
             maxRows={treeRows}
             onOpenFile={(file) => onOpenDiff(stagedTarget(file))}
-            menuFor={createFileMenu(repo, stagedTarget, onOpenDiff, actions.copy, stagedMenu)}
+            menuFor={createFileMenu(repo, stagedTarget, onOpenDiff, actions.copy, stagedMenu, {
+              enabled: canReveal,
+              onReveal: onRevealPath,
+            })}
             rowActions={stagedActions}
           />
         </div>
@@ -726,7 +743,10 @@ function UncommittedView({
             emptyText="No unstaged changes"
             maxRows={treeRows}
             onOpenFile={(file) => onOpenDiff(unstagedTarget(file))}
-            menuFor={createFileMenu(repo, unstagedTarget, onOpenDiff, actions.copy, unstagedMenu)}
+            menuFor={createFileMenu(repo, unstagedTarget, onOpenDiff, actions.copy, unstagedMenu, {
+              enabled: canReveal,
+              onReveal: onRevealPath,
+            })}
             rowActions={unstagedActions}
           />
         </div>

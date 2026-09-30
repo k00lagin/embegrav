@@ -5,6 +5,12 @@ import type { MenuEntry } from './ContextMenu'
 import IconFileDiff from '~icons/lucide/file-diff'
 import IconFileCode from '~icons/lucide/file-code'
 import IconCopy from '~icons/lucide/copy'
+import IconFolderOpen from '~icons/lucide/folder-open'
+
+export interface FileReveal {
+  enabled: boolean
+  onReveal: (path: string) => void
+}
 
 export function withWorkingFile(target: DiffTarget): DiffTarget {
   const { file } = target
@@ -34,6 +40,7 @@ export function createFileMenu(
   open: (target: DiffTarget) => void,
   copy: (text: string, label: string) => Promise<void>,
   extraFor?: (file: ChangedFile | undefined, path: string, isDirectory: boolean) => MenuEntry[],
+  reveal?: FileReveal,
 ) {
   return (file: ChangedFile | undefined, path: string, isDirectory: boolean): MenuEntry[] => {
     const entries: MenuEntry[] = []
@@ -66,6 +73,13 @@ export function createFileMenu(
     if (extra.length) entries.push(...extra, 'separator')
     const separator = separatorFor(repo)
     const absolute = `${repo.replace(/[\\/]$/, '')}${separator}${path.split('/').join(separator)}`
+    if (reveal)
+      entries.push({
+        label: 'Reveal in File Explorer',
+        icon: <IconFolderOpen />,
+        disabled: !reveal.enabled,
+        onClick: () => reveal.onReveal(path),
+      })
     entries.push(
       {
         label: 'Copy Absolute File Path',

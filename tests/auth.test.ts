@@ -27,6 +27,7 @@ afterEach(async () => {
   vi.restoreAllMocks()
   vi.doUnmock('@hono/node-server')
   vi.doUnmock('../server/repos.ts')
+  vi.doUnmock('../server/explorer.ts')
   await rm(home, { recursive: true, force: true })
 })
 
@@ -142,6 +143,35 @@ it('answers API requests only for paired sessions', async () => {
   ).toBe(200)
   // The query-string fallback exists only for EventSource.
   expect((await call(`/api/repos?session=${session}`)).status).toBe(401)
+})
+
+it.each([
+  ['127.0.0.1', 'http://localhost', 200],
+  ['192.168.1.20', 'http://localhost', 403],
+  ['127.0.0.1', 'http://remote.example', 403],
+])('allows revealing only through local access (%s, %s)', async (address, origin, status) => {
+  const reveal = vi.fn().mockResolvedValue(undefined)
+  vi.doMock('../server/explorer.ts', () => ({ revealInFileExplorer: reveal }))
+  const fetchRequest = await startServer()
+  const { token } = await createPairingToken()
+  const session = await redeemPairingToken(token)
+  const env = { incoming: { socket: { remoteAddress: address } } }
+  const headers = { authorization: `Bearer ${session}`, 'content-type': 'application/json' }
+  const capabilities = await fetchRequest(
+    new Request(`${origin}/api/capabilities`, { headers }),
+    env,
+  )
+  expect(await capabilities.json()).toEqual({ revealInFileExplorer: status === 200 })
+  const response = await fetchRequest(
+    new Request(`${origin}/api/repos/reveal`, {
+      method: 'POST',
+      headers,
+      body: JSON.stringify({ path: 'test-repo' }),
+    }),
+    env,
+  )
+  expect(response.status).toBe(status)
+  expect(reveal).toHaveBeenCalledTimes(status === 200 ? 1 : 0)
 })
 
 it.each([
