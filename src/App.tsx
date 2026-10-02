@@ -801,6 +801,8 @@ function Main({ initialRepo }: { initialRepo: string | null }) {
         onAddRemote={() => void addRemote()}
         onEditRemote={(n) => void editRemote(n)}
         onRemoveRemote={(n) => void removeRemote(n)}
+        onPublish={() => void actions.publishToGitHub()}
+        publishing={actions.isRunning('publishGitHub')}
         onOpenSettings={() => setSettingsOpen(true)}
       />
 

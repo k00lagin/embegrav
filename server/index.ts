@@ -18,6 +18,7 @@ import {
 } from './auth.ts'
 import { browse, homeDirectory } from './browse.ts'
 import { GitError } from './git.ts'
+import { getGitHubAccount } from './github.ts'
 import {
   getCommitDetails,
   getCommitStats,
@@ -200,6 +201,8 @@ api.post('/repos/reveal', async (c) => {
   await revealInFileExplorer(target)
   return c.json({ ok: true })
 })
+
+api.get('/github/account', async (c) => c.json(await getGitHubAccount()))
 
 api.get('/browse', async (c) => c.json(await browse(c.req.query('path') ?? '')))
 

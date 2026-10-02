@@ -7,6 +7,7 @@ import type {
   DirectoryListing,
   FileDiffRequest,
   FileDiffResponse,
+  GitHubAccount,
   GraphData,
   GraphRequest,
   RepoInfo,
@@ -99,6 +100,8 @@ export const api = {
   browse: (path: string) =>
     request<DirectoryListing>('GET', `/api/browse?path=${encodeURIComponent(path)}`),
   browseHome: () => request<{ path: string }>('GET', '/api/browse/home'),
+  /** The GitHub CLI account used to publish repositories (fails when gh is missing or signed out). */
+  githubAccount: () => request<GitHubAccount>('GET', '/api/github/account'),
   graph: (req: GraphRequest) => post<GraphData>('/api/graph', req),
   commit: (repo: string, hash: string) => post<CommitDetails>('/api/commit', { repo, hash }),
   uncommitted: (repo: string) => post<UncommittedDetails>('/api/uncommitted', { repo }),

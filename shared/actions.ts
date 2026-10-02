@@ -1,3 +1,5 @@
+import { GITHUB_STRATEGIES, type GitHubVia } from './github.ts'
+
 /** Arguments accepted by each Git operation, shared by callers and handlers. */
 export interface ActionArgs {
   fetch: { remote?: string; prune?: boolean; pruneTags?: boolean }
@@ -17,6 +19,18 @@ export interface ActionArgs {
   removeRemote: { name: string }
   pruneRemote: { name: string }
   setUpstream: { branch: string; upstream: string }
+  /** Create a GitHub repository, add it as a remote, optionally push HEAD's branch */
+  publishGitHub: {
+    /** GitHub CLI or Git Credential Manager */
+    via: GitHubVia
+    name: string
+    visibility: 'public' | 'private'
+    /** User or organization; defaults to the signed-in user */
+    owner?: string
+    description?: string
+    remote: string
+    push?: boolean
+  }
   checkoutBranch: { name: string }
   checkoutRemoteBranch: { remoteRef: string; localName: string }
   checkoutCommit: { hash: string }
@@ -96,6 +110,15 @@ const rules = {
   removeRemote: { name: 'string' },
   pruneRemote: { name: 'string' },
   setUpstream: { branch: 'string', upstream: 'string' },
+  publishGitHub: {
+    via: GITHUB_STRATEGIES,
+    name: 'string',
+    visibility: ['public', 'private'],
+    owner: 'string?',
+    description: 'string?',
+    remote: 'string',
+    push: 'boolean?',
+  },
   checkoutBranch: { name: 'string' },
   checkoutRemoteBranch: { remoteRef: 'string', localName: 'string' },
   checkoutCommit: { hash: 'string' },
@@ -196,6 +219,7 @@ export function decodeActionRequest(value: unknown): ActionRequest {
       key !== 'message' &&
       key !== 'path' &&
       key !== 'patch' &&
+      key !== 'description' &&
       value.action !== 'setUser' &&
       (field.startsWith('-') || /[\n\r]/.test(field))
     )

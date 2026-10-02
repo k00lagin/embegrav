@@ -17,6 +17,8 @@ import IconChevronDown from '~icons/lucide/chevron-down'
 import IconArchive from '~icons/lucide/archive'
 import IconGitBranchPlus from '~icons/lucide/git-branch-plus'
 import IconCloud from '~icons/lucide/cloud'
+import IconCloudUpload from '~icons/lucide/cloud-upload'
+import IconGithub from '~icons/lucide/github'
 import IconTrash2 from '~icons/lucide/trash-2'
 import IconPencil from '~icons/lucide/pencil'
 import IconLoader from '~icons/lucide/loader-circle'
@@ -63,6 +65,9 @@ interface Props {
   onAddRemote: () => void
   onEditRemote: (name: string) => void
   onRemoveRemote: (name: string) => void
+  /** Create a GitHub repository for the current repository and push to it */
+  onPublish: () => void
+  publishing: boolean
   onOpenSettings: () => void
 }
 
@@ -231,16 +236,35 @@ export function Toolbar(p: Props) {
         onClick={p.onPull}
         onOptions={p.onPullOptions}
       />
-      <SplitButton
-        icon={<IconUpload className="w-4 h-4" />}
-        title={upstream && p.data?.currentBranch ? `Push to ${upstream.name}` : 'Push…'}
-        optionsTitle="Push with options (remote, set upstream, force with lease)…"
-        count={upstream?.ahead}
-        busy={p.pushing}
-        disabled={!p.data || p.data.remotes.length === 0 || !p.data.currentBranch}
-        onClick={p.onPush}
-        onOptions={p.onPushOptions}
-      />
+      {p.data && p.data.remotes.length === 0 ? (
+        // Without remotes there is nowhere to push: offer to publish instead.
+        <button
+          type="button"
+          className="btn btn-secondary !h-[26px] !px-2 gap-1.5"
+          title="Create a public or private GitHub repository and push to it"
+          disabled={p.publishing}
+          aria-busy={p.publishing}
+          onClick={p.onPublish}
+        >
+          {p.publishing ? (
+            <IconLoader className="w-4 h-4 animate-spin" />
+          ) : (
+            <IconCloudUpload className="w-4 h-4" />
+          )}
+          Publish
+        </button>
+      ) : (
+        <SplitButton
+          icon={<IconUpload className="w-4 h-4" />}
+          title={upstream && p.data?.currentBranch ? `Push to ${upstream.name}` : 'Push…'}
+          optionsTitle="Push with options (remote, set upstream, force with lease)…"
+          count={upstream?.ahead}
+          busy={p.pushing}
+          disabled={!p.data || !p.data.currentBranch}
+          onClick={p.onPush}
+          onOptions={p.onPushOptions}
+        />
+      )}
 
       <Dropdown
         icon={<IconCloud className="w-4 h-4" />}
@@ -291,6 +315,14 @@ export function Toolbar(p: Props) {
               }}
             >
               <IconPlus className="w-4 h-4" /> Add remote…
+            </DropdownItem>
+            <DropdownItem
+              onClick={() => {
+                close()
+                p.onPublish()
+              }}
+            >
+              <IconGithub className="w-4 h-4" /> Publish to GitHub…
             </DropdownItem>
           </div>
         )}

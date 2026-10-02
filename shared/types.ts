@@ -1,4 +1,5 @@
 import type { UndoStep } from './actions.ts'
+import type { GitHubVia } from './github.ts'
 
 // Types shared between the server and the web client.
 
@@ -172,6 +173,14 @@ export interface FileDiffRequest {
 export interface FileDiffResponse {
   patch: string
   binary: boolean
+}
+
+/** The signed-in GitHub user; owners lists the user first, then their organizations. */
+export interface GitHubAccount {
+  login: string
+  owners: string[]
+  /** Strategy that signed in; publishing uses the same one */
+  via: GitHubVia
 }
 
 export interface ActionResult {

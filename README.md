@@ -120,6 +120,22 @@ jsdom; typechecking includes the test files.
   the upstream (with ahead / behind badges; the arrow next to each opens the
   options dialog), remotes management (add / edit / remove), refresh,
   settings.
+- Publish to GitHub: a repository without remotes shows **Publish** in place of
+  Push (also available as _Remotes → Publish to GitHub…_). It creates a public
+  or private repository under your account or one of your organizations, adds
+  it as a remote and pushes the current branch with upstream tracking. Two
+  sign-in strategies are tried in order:
+  1. [GitHub CLI](https://cli.github.com) signed in with `gh auth login`;
+     the remote URL follows `gh config get git_protocol` (https or ssh).
+  2. [Git Credential Manager](https://github.com/git-ecosystem/git-credential-manager)
+     (bundled with Git for Windows): the server reads the github.com credential
+     with `git credential fill` and calls the GitHub REST API; the remote uses
+     https. When no credential is stored, GCM shows its sign-in window on the
+     server computer. The credential is only read, never stored or erased.
+
+  The publish dialog shows which strategy signed in, and publishing uses the
+  same one.
+
 - Merge / rebase / cherry-pick / revert in progress banner with continue,
   skip and abort.
 - Auto refresh: the server watches the `.git` directory and pushes change
@@ -193,20 +209,21 @@ All endpoints are under `/api` and take JSON bodies. Every endpoint except
 `POST /auth/pair` requires `Authorization: Bearer <session>`; `GET /events`
 takes it as `?session=` because `EventSource` cannot send headers.
 
-| Endpoint             | Purpose                                |
-| -------------------- | -------------------------------------- |
-| `POST /auth/pair`    | trade a pairing token for a session    |
-| `POST /auth/session` | check the current session              |
-| `GET /repos`         | registered repositories                |
-| `POST /repos`        | register a path (`{ path }`)           |
-| `POST /graph`        | commits, refs, stashes, status, state  |
-| `POST /commit`       | commit details + changed files         |
-| `POST /uncommitted`  | staged / unstaged files                |
-| `POST /compare`      | files changed between two revisions    |
-| `POST /file-diff`    | unified patch for one file             |
-| `POST /file-content` | full file contents at a revision       |
-| `POST /action`       | run a git action (`{ action, args }`)  |
-| `GET /events`        | SSE stream of repository change events |
+| Endpoint              | Purpose                                |
+| --------------------- | -------------------------------------- |
+| `POST /auth/pair`     | trade a pairing token for a session    |
+| `POST /auth/session`  | check the current session              |
+| `GET /repos`          | registered repositories                |
+| `POST /repos`         | register a path (`{ path }`)           |
+| `POST /graph`         | commits, refs, stashes, status, state  |
+| `POST /commit`        | commit details + changed files         |
+| `POST /uncommitted`   | staged / unstaged files                |
+| `POST /compare`       | files changed between two revisions    |
+| `POST /file-diff`     | unified patch for one file             |
+| `POST /file-content`  | full file contents at a revision       |
+| `GET /github/account` | GitHub user, organizations, strategy   |
+| `POST /action`        | run a git action (`{ action, args }`)  |
+| `GET /events`         | SSE stream of repository change events |
 
 Action names and payloads are defined in `shared/actions.ts` and validated before
 dispatch. Boolean options are JSON booleans. The API also retains options that

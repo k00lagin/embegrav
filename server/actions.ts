@@ -3,6 +3,7 @@ import { join } from 'node:path'
 import { assertSafeArg, git, gitOrNull, gitOutput, optionalString } from './git.ts'
 import { getState, getUncommitted } from './repo.ts'
 import { applyHunk } from './hunks.ts'
+import { publishToGitHub } from './github.ts'
 import type { ActionArgs, ActionName, UndoStep } from '../shared/actions.ts'
 
 export interface ActionOutcome {
@@ -151,6 +152,7 @@ const actions: Handlers = {
   async pruneRemote(repo, a) {
     return gitOutput(repo, ['remote', 'prune', ref(a.name, 'remote')])
   },
+  publishGitHub: (repo, a) => publishToGitHub(repo, a),
   async setUpstream(repo, a) {
     return gitOutput(repo, [
       'branch',

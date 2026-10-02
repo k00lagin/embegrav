@@ -1,7 +1,9 @@
-import { useMemo, useRef, useState } from 'react'
+import { useLayoutEffect, useMemo, useRef, useState } from 'react'
 import type { ActionArgs, ActionName, UndoStep } from '@shared/actions'
 import { checkedValue, choiceValue, optionalTextValue, textValue } from '@/components/dialogValues'
-import type { GitCommit, GitRef, GraphData, StashInfo } from '@shared/types'
+import type { GitCommit, GitHubAccount, GitRef, GraphData, StashInfo } from '@shared/types'
+import { GITHUB_REPO_NAME_RE } from '@shared/github'
+import { leafPart } from '@/lib/paths'
 import { api } from '@/api'
 import { useDialog } from '@/components/Dialog'
 import { useToast } from '@/components/Toast'
@@ -58,6 +60,8 @@ export interface RepoActions {
   /** Push to the configured upstream right away (asks for options when there is none) */
   push: () => Promise<boolean>
   pushWithOptions: () => Promise<boolean>
+  /** Create a GitHub repository (public or private), add it as a remote and push the current branch */
+  publishToGitHub: () => Promise<boolean>
   stash: () => Promise<boolean>
   discardAll: () => Promise<boolean>
   createBranchAt: (hash: string) => Promise<boolean>
@@ -76,6 +80,7 @@ const TRACKED_ACTIONS = new Set<ActionName>([
   'fetch',
   'pull',
   'push',
+  'publishGitHub',
   'continue',
   'skip',
   'abort',
@@ -104,6 +109,15 @@ export function useRepoActions(
   // The ref closes the gap before React renders; the snapshot drives button state.
   const [pending, setPending] = useState(() => new Map<string, ReadonlySet<ActionName>>())
   const inFlight = useRef(pending)
+  const repoSession = useMemo(() => ({ repo }), [repo])
+  const activeRepoSession = useRef<typeof repoSession | null>(null)
+
+  useLayoutEffect(() => {
+    activeRepoSession.current = repoSession
+    return () => {
+      activeRepoSession.current = null
+    }
+  }, [repoSession])
 
   return useMemo<RepoActions>(() => {
     const run: RepoActions['run'] = async (title, action, args, opts = {}) => {
@@ -1131,6 +1145,117 @@ export function useRepoActions(
       return pushBranch(current)
     }
 
+    const publishToGitHub = async () => {
+      if (!repo || activeRepoSession.current !== repoSession) return false
+      const progress = toast.show('progress', 'Connecting to GitHub…')
+      let account: GitHubAccount
+      try {
+        account = await api.githubAccount()
+        toast.dismiss(progress)
+      } catch (e) {
+        if (activeRepoSession.current !== repoSession) {
+          toast.dismiss(progress)
+          return false
+        }
+        toast.update(progress, {
+          kind: 'error',
+          title: 'Cannot publish to GitHub',
+          detail: (e as Error).message,
+        })
+        return false
+      }
+      // Account discovery may open a sign-in window while the user changes repositories.
+      if (activeRepoSession.current !== repoSession) return false
+      const taken = new Set(remotes.map((r) => r.name))
+      const canPush = !!current && !data?.state.isEmpty
+      const v = await dialog.open({
+        title: 'Publish to GitHub',
+        description: `${
+          canPush
+            ? `Creates a GitHub repository, adds it as a remote and pushes ${current}.`
+            : 'Creates a GitHub repository and adds it as a remote.'
+        }\nSigned in as ${account.login} via ${
+          account.via === 'gh' ? 'GitHub CLI' : 'Git Credential Manager'
+        }.`,
+        fields: [
+          {
+            type: 'select',
+            name: 'owner',
+            label: 'Owner',
+            options: account.owners.map((o) => ({ value: o, label: o })),
+            default: account.login,
+          },
+          {
+            type: 'text',
+            name: 'name',
+            label: 'Repository name',
+            default: leafPart(repo).replace(/[^\w.-]+/g, '-'),
+          },
+          { type: 'text', name: 'description', label: 'Description (optional)' },
+          {
+            type: 'radio',
+            name: 'visibility',
+            label: 'Visibility',
+            options: [
+              {
+                value: 'private',
+                label: 'Private',
+                description: 'You choose who can see and commit to this repository.',
+              },
+              {
+                value: 'public',
+                label: 'Public',
+                description: 'Anyone on the internet can see this repository.',
+              },
+            ],
+            default: 'private',
+          },
+          {
+            type: 'text',
+            name: 'remote',
+            label: 'Remote name',
+            default: ['origin', 'github'].find((n) => !taken.has(n)) ?? '',
+          },
+          ...(canPush
+            ? [
+                {
+                  type: 'checkbox',
+                  name: 'push',
+                  label: `Push ${current} and set upstream`,
+                  default: true,
+                } as const,
+              ]
+            : []),
+        ],
+        submitLabel: 'Publish',
+        validate: (val) => {
+          const name = String(val.name)
+          if (!GITHUB_REPO_NAME_RE.test(name))
+            return 'Repository names may contain only letters, digits, ".", "-" and "_"'
+          const remote = String(val.remote).trim()
+          if (taken.has(remote)) return `Remote "${remote}" already exists`
+          return validateRefName(remote, 'Remote name')
+        },
+      })
+      if (!v || activeRepoSession.current !== repoSession) return false
+      const visibility = choiceValue(v, 'visibility', ['public', 'private'] as const)
+      const owner = textValue(v, 'owner')
+      const description = textValue(v, 'description').trim()
+      return run(
+        `Publish to GitHub ${owner}/${textValue(v, 'name')} (${visibility})`,
+        'publishGitHub',
+        {
+          via: account.via,
+          name: textValue(v, 'name'),
+          owner,
+          visibility,
+          remote: textValue(v, 'remote').trim(),
+          push: checkedValue(v, 'push'),
+          ...(description ? { description } : {}),
+        },
+      )
+    }
+
     const branchDropMenu: RepoActions['branchDropMenu'] = (source, target) => {
       const sourceHash = data?.refs.find((r) => r.type === 'head' && r.name === source)?.hash
       if (target.branch === source || (!target.branch && target.hash === sourceHash)) return []
@@ -1199,11 +1324,12 @@ export function useRepoActions(
       pullWithOptions,
       push,
       pushWithOptions,
+      publishToGitHub,
       stash,
       discardAll,
       createBranchAt,
       editUser,
       copy,
     }
-  }, [repo, data, refresh, settings.fetchAndPrune, dialog, toast, pending])
+  }, [repo, repoSession, data, refresh, settings.fetchAndPrune, dialog, toast, pending])
 }
