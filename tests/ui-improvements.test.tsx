@@ -619,6 +619,70 @@ it('offers undo after removing a repository from the list', async () => {
   expect(await screen.findByText('Fix typo')).toBeTruthy()
 })
 
+it('moves the repository highlight with arrows while keeping search focused and selects with Enter', async () => {
+  vi.mocked(api.repos).mockResolvedValue({
+    repos: [
+      { path: 'R', name: 'Repo R' },
+      { path: 'S', name: 'Repo S' },
+      { path: 'T', name: 'Repo T' },
+    ],
+  })
+  render(<App />)
+  fireEvent.click(await screen.findByRole('button', { name: 'Repo R' }))
+  const search = screen.getByRole('textbox', { name: 'Search repositories' })
+  fireEvent.change(search, { target: { value: 'Repo' } })
+  const highlighted = () => document.querySelector('.dropdown-item.active')?.textContent
+  expect(highlighted()).toBe('Repo RR')
+  fireEvent.keyDown(search, { key: 'ArrowDown' })
+  expect(highlighted()).toBe('Repo SS')
+  fireEvent.keyDown(search, { key: 'ArrowUp' })
+  expect(highlighted()).toBe('Repo RR')
+  fireEvent.keyDown(search, { key: 'ArrowUp' })
+  expect(highlighted()).toBe('Repo TT')
+  fireEvent.keyDown(search, { key: 'ArrowDown' })
+  expect(highlighted()).toBe('Repo RR')
+  fireEvent.keyDown(search, { key: 'ArrowDown' })
+  expect(document.activeElement).toBe(search)
+  expect(api.graph).not.toHaveBeenCalledWith(expect.objectContaining({ repo: 'S' }))
+  fireEvent.keyDown(search, { key: 'Enter' })
+  await waitFor(() =>
+    expect(api.graph).toHaveBeenCalledWith(expect.objectContaining({ repo: 'S' })),
+  )
+  expect(screen.queryByRole('textbox', { name: 'Search repositories' })).toBeNull()
+  fireEvent.click(screen.getByRole('button', { name: 'Repo S' }))
+  expect(highlighted()).toBe('Repo SS')
+})
+
+it('resets the repository highlight when filtering and ignores navigation with no matches', async () => {
+  vi.mocked(api.repos).mockResolvedValue({
+    repos: [
+      { path: 'R', name: 'Repo R' },
+      { path: 'S', name: 'Repo S' },
+      { path: 'T', name: 'Repo T' },
+    ],
+  })
+  render(<App />)
+  fireEvent.click(await screen.findByRole('button', { name: 'Repo R' }))
+  const search = screen.getByRole('textbox', { name: 'Search repositories' })
+  fireEvent.keyDown(search, { key: 'ArrowDown' })
+  fireEvent.change(search, { target: { value: 'Repo T' } })
+  expect(document.querySelector('.dropdown-item.active')?.textContent).toBe('Repo TT')
+  fireEvent.keyDown(search, { key: 'ArrowDown' })
+  expect(document.querySelector('.dropdown-item.active')?.textContent).toBe('Repo TT')
+  fireEvent.change(search, { target: { value: 'missing' } })
+  fireEvent.keyDown(search, { key: 'ArrowDown' })
+  fireEvent.keyDown(search, { key: 'ArrowUp' })
+  fireEvent.keyDown(search, { key: 'Enter' })
+  expect(screen.getByText('No matching repositories')).toBeTruthy()
+  expect(document.querySelector('.dropdown-item.active')).toBeNull()
+  expect(document.activeElement).toBe(search)
+  fireEvent.change(search, { target: { value: 'Repo T' } })
+  fireEvent.keyDown(search, { key: 'Enter' })
+  await waitFor(() =>
+    expect(api.graph).toHaveBeenCalledWith(expect.objectContaining({ repo: 'T' })),
+  )
+})
+
 it('reveals the repository under the context menu without switching repositories', async () => {
   vi.mocked(api.repos).mockResolvedValue({
     repos: [

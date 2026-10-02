@@ -322,15 +322,31 @@ function RepositoryFilter(
   },
 ) {
   const [query, setQuery] = useState('')
+  const [highlightedPath, setHighlightedPath] = useState(p.repo)
   const input = useRef<HTMLInputElement>(null)
+  const highlightedRow = useRef<HTMLDivElement>(null)
   const needle = query.trim().toLowerCase()
   const filteredRepos = p.repos.filter(
     (r) => r.name.toLowerCase().includes(needle) || r.path.toLowerCase().includes(needle),
   )
+  const highlighted = filteredRepos.find((r) => r.path === highlightedPath) ?? filteredRepos[0]
 
   useEffect(() => {
     input.current?.focus()
   }, [])
+
+  useEffect(() => {
+    const row = highlightedRow.current
+    const panel = row?.closest<HTMLElement>('.dropdown-panel')
+    const header = input.current?.parentElement
+    if (!row || !panel || !header) return
+    const bounds = row.getBoundingClientRect()
+    const top = header.getBoundingClientRect().bottom
+    const bottom = panel.getBoundingClientRect().bottom
+    if (bounds.top < top) panel.scrollTop -= top - bounds.top
+    else if (bounds.bottom > bottom) panel.scrollTop += bounds.bottom - bottom
+    // oxlint-disable-next-line react/exhaustive-effect-dependencies -- selection and filtering move the highlighted row
+  }, [highlighted?.path, query])
 
   return (
     <div className="pb-1 min-w-0 w-full">
@@ -342,14 +358,27 @@ function RepositoryFilter(
           placeholder="Search repositories"
           aria-label="Search repositories"
           value={query}
-          onChange={(e) => setQuery(e.target.value)}
+          onChange={(e) => {
+            setQuery(e.target.value)
+            setHighlightedPath(null)
+          }}
           onKeyDown={(e) => {
+            if (e.key === 'ArrowDown' || e.key === 'ArrowUp') {
+              e.preventDefault()
+              e.stopPropagation()
+              if (!filteredRepos.length) return
+              const index = filteredRepos.findIndex((r) => r.path === highlighted?.path)
+              const step = e.key === 'ArrowDown' ? 1 : -1
+              const next = (index + step + filteredRepos.length) % filteredRepos.length
+              setHighlightedPath(filteredRepos[next].path)
+              return
+            }
             if (e.key !== 'Enter') return
             e.preventDefault()
-            const first = filteredRepos[0]
-            if (first) {
+            e.stopPropagation()
+            if (highlighted) {
               p.close()
-              p.onSelectRepo(first.path)
+              p.onSelectRepo(highlighted.path)
             }
           }}
         />
@@ -357,6 +386,7 @@ function RepositoryFilter(
       {filteredRepos.map((r) => (
         <div
           key={r.path}
+          ref={r.path === highlighted?.path ? highlightedRow : undefined}
           onContextMenu={(e) => {
             e.preventDefault()
             e.stopPropagation()
@@ -372,7 +402,7 @@ function RepositoryFilter(
         >
           <DropdownItem
             className="min-w-0"
-            active={r.path === p.repo}
+            active={r.path === highlighted?.path}
             onClick={() => {
               p.close()
               p.onSelectRepo(r.path)
