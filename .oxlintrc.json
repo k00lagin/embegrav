@@ -10,5 +10,5 @@
     "unicorn/consistent-function-scoping": "off",
     "import/no-unassigned-import": "off"
   },
-  "ignorePatterns": ["dist/**", "node_modules/**"]
+  "ignorePatterns": ["dist/**", "dist-server/**", "node_modules/**"]
 }

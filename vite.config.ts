@@ -4,8 +4,8 @@ import tailwindcss from '@tailwindcss/vite'
 import Icons from 'unplugin-icons/vite'
 import { fileURLToPath, URL } from 'node:url'
 
-export default defineConfig({
-  plugins: [react(), tailwindcss(), Icons({ compiler: 'jsx', jsx: 'react' })],
+export default defineConfig(({ isSsrBuild }) => ({
+  plugins: isSsrBuild ? [] : [react(), tailwindcss(), Icons({ compiler: 'jsx', jsx: 'react' })],
   resolve: {
     alias: {
       '@': fileURLToPath(new URL('./src', import.meta.url)),
@@ -20,4 +20,4 @@ export default defineConfig({
     },
   },
   build: { outDir: 'dist', target: 'es2022' },
-})
+}))

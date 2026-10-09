@@ -151,7 +151,7 @@ it.each(['Enter', ' ', 'Escape', 'Tab'])(
     const row = root.querySelector<HTMLElement>('[data-item-path="file.txt"]')!
     fireEvent.contextMenu(row)
     const disabled = await screen.findByRole('menuitem', { name: 'Unavailable' })
-    expect(document.activeElement).toBe(disabled)
+    await waitFor(() => expect(document.activeElement).toBe(disabled))
     fireEvent.keyDown(disabled, { key: 'Enter' })
     fireEvent.keyDown(disabled, { key: ' ' })
     fireEvent.click(disabled)

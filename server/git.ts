@@ -109,15 +109,6 @@ export async function gitOutput(
     .trim()
 }
 
-export async function isGitRepo(dir: string): Promise<boolean> {
-  try {
-    const out = await git(dir, ['rev-parse', '--is-inside-work-tree'])
-    return out.trim() === 'true'
-  } catch {
-    return false
-  }
-}
-
 export async function repoRoot(dir: string): Promise<string | null> {
   const out = await gitOrNull(dir, ['rev-parse', '--show-toplevel'])
   return out ? out.trim() : null

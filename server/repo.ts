@@ -167,10 +167,19 @@ export async function getRefs(repo: string): Promise<GitRef[]> {
 
 export async function getHead(
   repo: string,
-): Promise<{ head: string | null; branch: string | null }> {
-  const head = (await gitOrNull(repo, ['rev-parse', '--verify', '-q', 'HEAD']))?.trim() || null
-  const branch = (await gitOrNull(repo, ['symbolic-ref', '-q', '--short', 'HEAD']))?.trim() || null
-  return { head, branch }
+): Promise<{ head: string | null; branch: string | null; gitDir: string }> {
+  const [location, branch] = await Promise.all([
+    gitRaw(repo, ['rev-parse', '--absolute-git-dir', '--verify', '-q', 'HEAD'], {
+      allowCodes: [1],
+    }),
+    gitOrNull(repo, ['symbolic-ref', '-q', '--short', 'HEAD']),
+  ])
+  // rev-parse prints the directory even when an unborn HEAD exits with code 1.
+  const output = location.stdout.trim()
+  const separator = output.lastIndexOf('\n')
+  const head = location.code === 0 ? output.slice(separator + 1) : null
+  const gitDir = location.code === 0 ? output.slice(0, separator).replace(/\r$/, '') : output
+  return { head, branch: branch?.trim() || null, gitDir }
 }
 
 export async function getStashes(repo: string): Promise<StashInfo[]> {
@@ -210,11 +219,15 @@ export async function getRemotes(repo: string): Promise<Remote[]> {
   return [...remotes].map(([name, url]) => ({ name, url }))
 }
 
-export async function getState(repo: string, head: string | null): Promise<RepoState> {
-  const gitDir = (await git(repo, ['rev-parse', '--absolute-git-dir'])).trim()
+export async function getState(
+  repo: string,
+  head: string | null,
+  gitDir?: string,
+): Promise<RepoState> {
+  const directory = gitDir ?? (await git(repo, ['rev-parse', '--absolute-git-dir'])).trim()
   const exists = async (p: string) => {
     try {
-      await stat(join(gitDir, p))
+      await stat(join(directory, p))
       return true
     } catch {
       return false
@@ -295,16 +308,46 @@ function parseLog(out: string): GitCommit[] {
 
 export async function getGraph(req: GraphRequest): Promise<GraphData> {
   const repo = req.repo
-  const [{ head, branch }, refs, stashesAll, uncommitted, remotes, config] = await Promise.all([
-    getHead(repo),
-    getRefs(repo),
-    req.showStashes ? getStashes(repo) : Promise.resolve([]),
-    getUncommitted(repo),
-    getRemotes(repo),
-    getUserConfig(repo),
-  ])
-  const [state, upstream] = await Promise.all([getState(repo, head), getUpstream(repo, branch)])
+  const headTask = getHead(repo)
+  const refsTask = getRefs(repo)
+  const stashesTask = req.showStashes ? getStashes(repo) : Promise.resolve([])
+  const [{ head, branch }, refs, history, uncommitted, remotes, config, state, upstream] =
+    await Promise.all([
+      headTask,
+      refsTask,
+      Promise.all([headTask, refsTask, stashesTask]).then(([location, allRefs, stashes]) =>
+        getHistory(req, location.head, allRefs, stashes),
+      ),
+      getUncommitted(repo),
+      getRemotes(repo),
+      getUserConfig(repo),
+      headTask.then((location) => getState(repo, location.head, location.gitDir)),
+      headTask.then((location) => getUpstream(repo, location.branch)),
+    ])
 
+  return {
+    ...history,
+    head,
+    currentBranch: branch,
+    refs: refs.filter(
+      (r) => (req.showRemoteBranches || r.type !== 'remote') && (req.showTags || r.type !== 'tag'),
+    ),
+    uncommitted,
+    remotes,
+    state,
+    upstream,
+    userName: config.name,
+    userEmail: config.email,
+  }
+}
+
+/** Only history inputs gate the log; status, config and upstream load alongside it. */
+async function getHistory(
+  req: GraphRequest,
+  head: string | null,
+  refs: GitRef[],
+  stashesAll: StashInfo[],
+): Promise<Pick<GraphData, 'commits' | 'stashes' | 'moreAvailable'>> {
   const orderFlag =
     req.order === 'topo'
       ? '--topo-order'
@@ -333,7 +376,7 @@ export async function getGraph(req: GraphRequest): Promise<GraphData> {
 
   let commits: GitCommit[] = []
   if (revs.length > 0) {
-    const out = await git(repo, [...args, ...revs, '--'])
+    const out = await git(req.repo, [...args, ...revs, '--'])
     commits = parseLog(out)
   }
 
@@ -360,30 +403,21 @@ export async function getGraph(req: GraphRequest): Promise<GraphData> {
   const moreAvailable = commits.length > req.maxCommits
   if (moreAvailable) commits = commits.slice(0, req.maxCommits)
 
-  return {
-    commits,
-    head,
-    currentBranch: branch,
-    refs: refs.filter(
-      (r) => (req.showRemoteBranches || r.type !== 'remote') && (req.showTags || r.type !== 'tag'),
-    ),
-    stashes,
-    uncommitted,
-    moreAvailable,
-    remotes,
-    state,
-    upstream,
-    userName: config.name,
-    userEmail: config.email,
-  }
+  return { commits, stashes, moreAvailable }
 }
 
 async function getUserConfig(repo: string): Promise<{ name: string; email: string }> {
-  const [name, email] = await Promise.all([
-    gitOrNull(repo, ['config', '--get', 'user.name']),
-    gitOrNull(repo, ['config', '--get', 'user.email']),
-  ])
-  return { name: name?.trim() ?? '', email: email?.trim() ?? '' }
+  const out = await gitOrNull(repo, ['config', '--null', '--get-regexp', '^user[.](name|email)$'])
+  const config = { name: '', email: '' }
+  // --null separates records with NUL and each key from its value with a newline.
+  // Keep the last value, matching --get when a local setting overrides a global one.
+  for (const record of (out ?? '').split('\0')) {
+    const separator = record.indexOf('\n')
+    const key = record.slice(0, separator)
+    if (key === 'user.name') config.name = record.slice(separator + 1).trim()
+    else if (key === 'user.email') config.email = record.slice(separator + 1).trim()
+  }
+  return config
 }
 
 // ---------------------------------------------------------------------------

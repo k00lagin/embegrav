@@ -56,3 +56,16 @@ it('reuses a registered root for a pasted subdirectory', async () => {
   await registerPath(join(repo, 'src'))
   expect(listRepos()).toEqual([registered])
 })
+
+it('scans immediate repositories while ignoring files, missing paths and bare repositories', async () => {
+  const bare = join(root, 'bare.git')
+  await mkdir(bare)
+  await git(bare, ['init', '--bare'])
+  await mkdir(join(root, 'ordinary-folder'))
+  const file = join(root, 'plain.txt')
+  await writeFile(file, '')
+  expect(await registerPath(root)).toEqual([{ path: resolve(repo), name: 'my repo' }])
+  expect(await registerPath(file)).toEqual([])
+  expect(await registerPath(join(root, 'missing'))).toEqual([])
+  expect(await registerPath(bare)).toEqual([])
+})

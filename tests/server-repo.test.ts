@@ -94,6 +94,40 @@ describe('repository status', () => {
 })
 
 describe('graph visibility', () => {
+  it('loads an unborn branch and takes the last configured identity values', async () => {
+    await git(repo, ['config', '--add', 'user.name', 'Last name'])
+    await git(repo, ['config', '--add', 'user.email', 'last@example.com'])
+    const data = await graph()
+    expect(data.head).toBeNull()
+    expect(data.currentBranch).toBe('main')
+    expect(data.commits).toEqual([])
+    expect(data.state.isEmpty).toBe(true)
+    expect(data.upstream).toBeNull()
+    expect(data.userName).toBe('Last name')
+    expect(data.userEmail).toBe('last@example.com')
+  })
+
+  it('loads upstream counts and keeps detached linked-worktree state separate', async () => {
+    const base = await commit('base')
+    await git(repo, ['remote', 'add', 'origin', 'https://example.com/repo.git'])
+    await git(repo, ['update-ref', 'refs/remotes/origin/main', base])
+    await git(repo, ['branch', '--set-upstream-to=origin/main', 'main'])
+    const head = await commit('ahead')
+    const main = await graph()
+    expect(main.head).toBe(head)
+    expect(main.upstream).toEqual({ name: 'origin/main', ahead: 1, behind: 0 })
+    const worktree = join(repo, 'linked')
+    await git(repo, ['worktree', 'add', '--detach', worktree, base])
+    await writeFile(join(repo, '.git', 'MERGE_HEAD'), `${base}\n`)
+    const detached = await graph({ repo: worktree })
+    expect(detached.head).toBe(base)
+    expect(detached.currentBranch).toBeNull()
+    expect(detached.upstream).toBeNull()
+    expect(detached.state.isEmpty).toBe(false)
+    expect(detached.state.mergeInProgress).toBe(false)
+    expect((await graph()).state.mergeInProgress).toBe(true)
+  })
+
   it('applies tag and remote visibility to refs on branch-reachable commits', async () => {
     const hash = await commit('base')
     await git(repo, ['tag', 'v1'])

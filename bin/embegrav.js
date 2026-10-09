@@ -1,18 +1,10 @@
 #!/usr/bin/env node
-// Entry point: runs the TypeScript server through tsx.
-import { spawn } from 'node:child_process'
-import { fileURLToPath } from 'node:url'
-import { dirname, join } from 'node:path'
+// Keep the compiled entry beside dist/ so its asset paths also work when linked.
+import { existsSync } from 'node:fs'
 
-const root = dirname(dirname(fileURLToPath(import.meta.url)))
-const child = spawn(
-  process.execPath,
-  [
-    '--import',
-    import.meta.resolve('tsx'),
-    join(root, 'server', 'index.ts'),
-    ...process.argv.slice(2),
-  ],
-  { stdio: 'inherit', cwd: process.cwd() },
-)
-child.on('exit', (code) => process.exit(code ?? 0))
+const entry = new URL('../dist-server/index.js', import.meta.url)
+if (!existsSync(entry)) {
+  console.error('Embegrav has not been built yet. Run "pnpm build" first.')
+  process.exit(1)
+}
+await import(entry.href)

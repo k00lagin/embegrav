@@ -6,7 +6,7 @@ import { join } from 'node:path'
 /**
  * Browser pairing.
  *
- * `embegrav pair` (or server startup) issues a short-lived, single-use pairing
+ * Only the explicit `embegrav pair` command issues a short-lived, single-use pairing
  * token. The browser redeems it once for a long-lived session token, keeps the
  * session in localStorage and sends it as `Authorization: Bearer <session>`.
  *

@@ -21,27 +21,28 @@ files tree.
 
 ```bash
 pnpm install
-pnpm build            # builds the web client into dist/
-pnpm start -- --open  # serves the UI for the current directory on http://127.0.0.1:3210
+pnpm build            # builds the client (dist/) and server (dist-server/), precompresses assets
+pnpm start --open     # serves the UI for the current directory on http://127.0.0.1:3210
 ```
 
 Pass one or more paths. If a path is not itself a repository, its immediate
 sub-directories are scanned:
 
 ```bash
-pnpm start -- C:\Git\my-repo D:\projects --port 4000 --open
+pnpm start C:\Git\my-repo D:\projects --port 4000 --open
 # or, once linked with `pnpm link --global`:
 embegrav ~/projects --open
 ```
 
 ### Pairing a browser and opening repositories by link
 
-The API only answers browsers paired with the server. On startup the server
-prints a single-use pairing link (and opens it with `--open`). Issue another
-one at any time:
+The API only answers browsers paired with the server. Ordinary startup never
+creates a pairing token; `--open` opens the UI without a token. Previously paired
+browsers keep their sessions. To pair a new browser, explicitly run this command
+in another terminal:
 
 ```bash
-embegrav pair                          # or: pnpm start -- pair
+embegrav pair                          # or: pnpm start pair
 embegrav pair --repo C:\Git\my-repo --ttl 10 --open
 # Pairing token: 7KQ2M9XHV4TR (single use, expires in 10 min)
 # Open: http://127.0.0.1:3210/?repo=C%3A%5CGit%5Cmy-repo#token=7KQ2M9XHV4TR
@@ -69,10 +70,19 @@ During development run the API server and the Vite dev server together:
 pnpm dev              # API on :3210, UI with HMR on http://localhost:5173
 ```
 
-Pair the dev UI with `pnpm start -- pair --port 5173` (Vite proxies `/api`).
+Pair the dev UI with `pnpm exec tsx server/index.ts pair --port 5173 --open`
+(Vite proxies `/api`; this command does not require a production build).
+
+Production startup and the linked CLI run compiled JavaScript directly in one
+Node process. Rebuild after changing source; `tsx` is only used for development.
+The build emits Brotli/gzip assets, served according to `Accept-Encoding`.
+Hashed assets are cached for a year; HTML is revalidated on navigation. Commit
+details and the diff viewer load on demand when opened.
 
 Other scripts: `pnpm lint` (oxlint), `pnpm fmt` (oxfmt), `pnpm typecheck`,
-and `pnpm test` (behavioral regressions with Vitest).
+and `pnpm test` (builds first, then runs behavioral regressions with Vitest,
+including the compiled CLI and compressed asset serving). After a build,
+`pnpm exec vitest run tests/server-repo.test.ts` runs a focused test file.
 
 Git mutation tests create disposable repositories under the operating system's
 temporary directory. They do not modify the repository running the tests or

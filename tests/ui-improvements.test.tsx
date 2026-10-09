@@ -97,7 +97,8 @@ it('keeps details while loading a missing parent, then selects and focuses it', 
     )
   render(<App />)
   fireEvent.click(await screen.findByText('Fix typo'))
-  fireEvent.click(await screen.findByRole('button', { name: B.slice(0, 8) }))
+  // The first opening also loads/transforms the lazy details module in the test worker.
+  fireEvent.click(await screen.findByRole('button', { name: B.slice(0, 8) }, { timeout: 5000 }))
   expect(screen.getByText('Details of Fix typo')).toBeTruthy()
   await waitFor(() => expect(api.graph).toHaveBeenCalledTimes(2))
   await act(async () => finish(graph))

@@ -1,4 +1,6 @@
 import {
+  lazy,
+  Suspense,
   useCallback,
   useEffect,
   useMemo,
@@ -18,13 +20,13 @@ import { parentPath } from './lib/paths'
 import { useRepoActions } from './hooks/useRepoActions'
 import { useRepoGraph } from './hooks/useRepoGraph'
 import { useErrorToast } from './hooks/useErrorToast'
-import { CommitDetails, type DetailsMode } from './components/CommitDetails'
+import type { DetailsMode } from './components/CommitDetails'
 import { CommitTable, type TableRow } from './components/CommitTable'
 import { ContextMenu, type ContextMenuState, type MenuEntry } from './components/ContextMenu'
 import { AuthGate } from './components/AuthGate'
 import { DialogProvider, useDialog } from './components/Dialog'
 import { checkedValue, textValue } from './components/dialogValues'
-import { DiffViewer, type DiffTarget } from './components/DiffViewer'
+import type { DiffTarget } from './components/DiffViewer'
 import { RepoPicker } from './components/RepoPicker'
 import type { LabelTarget } from './components/RefLabel'
 import { SettingsPanel } from './components/SettingsPanel'
@@ -45,6 +47,20 @@ import IconCopy from '~icons/lucide/copy'
 import IconTrash2 from '~icons/lucide/trash-2'
 
 const DEFAULT_SPLIT_WIDTH = 520
+const CommitDetails = lazy(() =>
+  import('./components/CommitDetails').then((module) => ({ default: module.CommitDetails })),
+)
+const DiffViewer = lazy(() =>
+  import('./components/DiffViewer').then((module) => ({ default: module.DiffViewer })),
+)
+
+function PanelLoading() {
+  return (
+    <div role="status" className="p-4 flex items-center gap-2 text-fg-muted">
+      <IconLoader className="animate-spin" /> Loading…
+    </div>
+  )
+}
 
 export function App() {
   return (
@@ -742,24 +758,26 @@ function Main({ initialRepo }: { initialRepo: string | null }) {
   const splitMode = settings.commitView === 'split'
   const detailsElement = (layout: 'row' | 'column') =>
     detailsMode && repo && data ? (
-      <CommitDetails
-        key={repo}
-        repo={repo}
-        mode={detailsMode}
-        data={data}
-        version={version}
-        actions={actions}
-        canReveal={canRevealRepo}
-        onRevealPath={(path) => void revealRepo(repo, path)}
-        layout={layout}
-        onOpenDiff={setDiff}
-        onSelectCommit={(h) => void goToCommit(h)}
-        onClose={() => {
-          pendingNavigation.current = null
-          setSelected(null)
-          setCompare(null)
-        }}
-      />
+      <Suspense fallback={<PanelLoading />}>
+        <CommitDetails
+          key={repo}
+          repo={repo}
+          mode={detailsMode}
+          data={data}
+          version={version}
+          actions={actions}
+          canReveal={canRevealRepo}
+          onRevealPath={(path) => void revealRepo(repo, path)}
+          layout={layout}
+          onOpenDiff={setDiff}
+          onSelectCommit={(h) => void goToCommit(h)}
+          onClose={() => {
+            pendingNavigation.current = null
+            setSelected(null)
+            setCompare(null)
+          }}
+        />
+      </Suspense>
     ) : null
   const panelTitle =
     detailsMode?.kind === 'uncommitted'
@@ -979,18 +997,20 @@ function Main({ initialRepo }: { initialRepo: string | null }) {
           </aside>
         )}
         {diff && repo && (
-          <DiffViewer
-            key={`${repo}:${diff.from}:${diff.to}:${diff.file.path}`}
-            repo={repo}
-            target={diff}
-            canReveal={canRevealRepo}
-            onRevealPath={(path) => void revealRepo(repo, path)}
-            actions={actions}
-            version={version}
-            diffStyle={settings.diffStyle}
-            onDiffStyleChange={(s) => updateSettings({ diffStyle: s })}
-            onClose={() => setDiff(null)}
-          />
+          <Suspense fallback={<PanelLoading />}>
+            <DiffViewer
+              key={`${repo}:${diff.from}:${diff.to}:${diff.file.path}`}
+              repo={repo}
+              target={diff}
+              canReveal={canRevealRepo}
+              onRevealPath={(path) => void revealRepo(repo, path)}
+              actions={actions}
+              version={version}
+              diffStyle={settings.diffStyle}
+              onDiffStyleChange={(s) => updateSettings({ diffStyle: s })}
+              onClose={() => setDiff(null)}
+            />
+          </Suspense>
         )}
       </div>
 

@@ -1,7 +1,7 @@
 import { readdir, stat } from 'node:fs/promises'
 import { basename, resolve } from 'node:path'
 import type { RepoInfo } from '../shared/types.ts'
-import { isGitRepo, repoRoot } from './git.ts'
+import { repoRoot } from './git.ts'
 
 const repos = new Map<string, RepoInfo>()
 
@@ -38,10 +38,8 @@ export async function registerPath(p: string): Promise<RepoInfo[]> {
   } catch {
     return []
   }
-  if (await isGitRepo(abs)) {
-    const r = await addRepoPath(abs)
-    return r ? [r] : []
-  }
+  const repo = await addRepoPath(abs)
+  if (repo) return [repo]
   const found: RepoInfo[] = []
   const entries = await readdir(abs, { withFileTypes: true })
   await Promise.all(

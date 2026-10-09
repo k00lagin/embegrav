@@ -279,7 +279,7 @@ it('wires App repository selection to owned graph data and explicit prepared mer
   vi.spyOn(api, 'graph').mockResolvedValueOnce(a).mockReturnValue(b.promise)
   vi.spyOn(api, 'action').mockResolvedValue({ ok: true, output: '' })
   render(<App />)
-  fireEvent.click(await screen.findByRole('button', { name: 'Commit Merge' }))
+  fireEvent.click(await screen.findByRole('button', { name: 'Commit Merge' }, { timeout: 5000 }))
   await waitFor(() =>
     expect(api.action).toHaveBeenCalledWith('A', 'commit', { messageMode: 'prepared' }),
   )

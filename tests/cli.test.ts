@@ -17,6 +17,7 @@ afterEach(() => {
   vi.doUnmock('@hono/node-server')
   vi.doUnmock('../server/repos.ts')
   vi.doUnmock('../server/watcher.ts')
+  vi.doUnmock('../server/auth.ts')
 })
 
 it('releases an SSE subscription when the client disconnects during watcher initialization', async () => {
@@ -84,6 +85,11 @@ it.each([
   const spawn = vi.fn(() => launcher)
   const warn = vi.spyOn(console, 'warn').mockImplementation(() => {})
   const log = vi.spyOn(console, 'log').mockImplementation(() => {})
+  const createPairingToken = vi.fn()
+  vi.doMock('../server/auth.ts', async (original) => ({
+    ...(await original<typeof import('../server/auth.ts')>()),
+    createPairingToken,
+  }))
   vi.doMock('node:child_process', async (original) => ({
     ...(await original<typeof import('node:child_process')>()),
     spawn,
@@ -107,8 +113,9 @@ it.each([
   try {
     await import('../server/index.ts')
     await vi.waitFor(() => expect(spawn).toHaveBeenCalledTimes(1))
-    // The opened page pairs itself with a fresh token.
-    expect(String(spawn.mock.calls[0])).toContain(`${origin}/#token=`)
+    expect(String(spawn.mock.calls[0])).toContain(origin)
+    expect(String(spawn.mock.calls[0])).not.toContain('#token=')
+    expect(createPairingToken).not.toHaveBeenCalled()
     expect(log).toHaveBeenCalledWith(`Embegrav listening on ${origin}`)
     expect(launcher.unref).toHaveBeenCalledTimes(1)
     expect(() => launcher.emit('error', new Error('launcher unavailable'))).not.toThrow()

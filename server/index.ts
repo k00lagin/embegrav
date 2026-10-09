@@ -1,6 +1,6 @@
 import { serve } from '@hono/node-server'
 import { serveStatic } from '@hono/node-server/serve-static'
-import { Hono } from 'hono'
+import { Hono, type Context } from 'hono'
 import { streamSSE } from 'hono/streaming'
 import { existsSync } from 'node:fs'
 import { dirname, join, relative, resolve } from 'node:path'
@@ -55,9 +55,9 @@ const HELP = `Usage: embegrav [options] [path ...]
 Opens a Git Graph style web UI for the given repositories (default: current directory).
 If a path is not a repository, its immediate sub-directories are scanned for repositories.
 
-The API only answers paired browsers. "embegrav pair" prints a single-use pairing
-link; opening it stores a session in the browser. The server prints (and with
---open, opens) such a link on startup. Links may carry ?repo=<path> to open a
+The API only answers paired browsers. Run "embegrav pair" explicitly to create
+a single-use pairing link; opening it stores a session in the browser. Ordinary
+startup never creates a pairing token. Links may carry ?repo=<path> to open a
 repository; paired browsers can open http://host:port/?repo=<path> directly.
 
 Options:
@@ -313,8 +313,27 @@ const distDir = join(packageRoot, 'dist')
 const hasDist = existsSync(join(distDir, 'index.html'))
 if (hasDist) {
   const root = relative(process.cwd(), distDir) || '.'
-  app.use('/*', serveStatic({ root }))
-  app.get('*', serveStatic({ root, path: 'index.html' }))
+  app.use(
+    '/assets/*',
+    serveStatic({
+      root,
+      precompressed: true,
+      onFound: (_path, c) => {
+        c.header('Cache-Control', 'public, max-age=31536000, immutable')
+        c.header('Vary', 'Accept-Encoding')
+      },
+    }),
+  )
+  const options = {
+    root,
+    precompressed: true,
+    onFound: (_path: string, c: Context) => {
+      c.header('Cache-Control', 'no-cache')
+      c.header('Vary', 'Accept-Encoding')
+    },
+  }
+  app.use('/*', serveStatic(options))
+  app.get('*', serveStatic({ ...options, path: 'index.html' }))
 } else {
   app.get('/', (c) =>
     c.text(
@@ -335,10 +354,10 @@ async function pair(cli: Cli) {
 async function main() {
   const cli = parseArgs(process.argv.slice(2))
   if (cli.command === 'pair') return pair(cli)
-  for (const p of cli.paths) {
-    const found = await registerPath(p)
-    if (found.length === 0) console.warn(`No git repository found at ${p}`)
-  }
+  const found = await Promise.all(cli.paths.map((p) => registerPath(p)))
+  found.forEach((repos, i) => {
+    if (repos.length === 0) console.warn(`No git repository found at ${cli.paths[i]}`)
+  })
   const repos = listRepos()
   serve({ fetch: app.fetch, port: cli.port, hostname: cli.host }, (info) => {
     const url = serverUrl(cli.host, info.port)
@@ -346,17 +365,7 @@ async function main() {
     console.log(
       `Repositories (${repos.length}): ${repos.map((r) => r.path).join(', ') || '(none)'}`,
     )
-    createPairingToken().then(
-      ({ token, expiresAt }) => {
-        const link = pairingUrl(cli.host, info.port, token, null)
-        console.log(`Pair a browser: ${link} (${formatExpiry(expiresAt)})`)
-        if (cli.open && hasDist) openBrowser(link)
-      },
-      (error: Error) => {
-        console.warn(`Could not create a pairing token: ${error.message}`)
-        if (cli.open && hasDist) openBrowser(url)
-      },
-    )
+    if (cli.open && hasDist) openBrowser(url)
   })
 }
 
