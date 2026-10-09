@@ -74,11 +74,13 @@ export function DropdownItem({
   children,
   onClick,
   active,
+  disabled,
   className = '',
 }: {
   children: ReactNode
   onClick?: () => void
   active?: boolean
+  disabled?: boolean
   className?: string
 }) {
   return (
@@ -88,6 +90,7 @@ export function DropdownItem({
         active ? 'active' : ''
       } ${className}`}
       onClick={onClick}
+      disabled={disabled}
     >
       {children}
     </button>

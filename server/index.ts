@@ -28,7 +28,7 @@ import {
   getGraph,
   getUncommittedDetails,
 } from './repo.ts'
-import { getRepo, listRepos, registerPath, removeRepo } from './repos.ts'
+import { findRepo, getRepo, listRepos, registerPath, removeRepo } from './repos.ts'
 import { subscribe } from './watcher.ts'
 import { revealInFileExplorer, workingRevealPath } from './explorer.ts'
 import { isLocalRequest } from './local.ts'
@@ -170,6 +170,13 @@ api.use('*', async (c, next) => {
 api.post('/auth/session', (c) => c.json({ ok: true }))
 
 api.get('/repos', (c) => c.json({ repos: listRepos() }))
+
+api.post('/repos/resolve', async (c) => {
+  const body = (await c.req.json()) as { path?: unknown }
+  if (typeof body.path !== 'string' || !body.path.trim())
+    return c.json({ error: 'path is required' }, 400)
+  return c.json({ repo: await findRepo(body.path) })
+})
 
 api.get('/capabilities', (c) => c.json({ revealInFileExplorer: isLocalRequest(c) }))
 

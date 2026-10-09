@@ -778,6 +778,7 @@ function Main({ initialRepo }: { initialRepo: string | null }) {
         repo={repo}
         onSelectRepo={selectRepo}
         onAddRepo={addRepo}
+        onSubmitRepo={submitRepo}
         onRepoContextMenu={onRepoContextMenu}
         repoContextMenuOpen={menu?.source === 'repository'}
         data={data}

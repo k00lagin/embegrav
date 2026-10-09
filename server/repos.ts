@@ -9,14 +9,21 @@ function normalize(p: string): string {
   return resolve(p).replace(/[\\/]+$/, '')
 }
 
-async function addRepoPath(p: string): Promise<RepoInfo | null> {
+/** Resolve a working tree without registering it or scanning child directories. */
+export async function findRepo(p: string): Promise<RepoInfo | null> {
   const root = await repoRoot(p)
   if (!root) return null
   const key = normalize(root)
-  if (!repos.has(key)) {
-    repos.set(key, { path: key, name: basename(key) || key })
-  }
-  return repos.get(key)!
+  const existing = [...repos.values()].find((r) =>
+    process.platform === 'win32' ? r.path.toLowerCase() === key.toLowerCase() : r.path === key,
+  )
+  return existing ?? { path: key, name: basename(key) || key }
+}
+
+async function addRepoPath(p: string): Promise<RepoInfo | null> {
+  const repo = await findRepo(p)
+  if (repo) repos.set(repo.path, repo)
+  return repo
 }
 
 /**

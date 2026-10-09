@@ -1,6 +1,8 @@
 import { useEffect, useRef, useState, type ReactNode } from 'react'
 import type { GraphData, RepoInfo } from '@shared/types'
 import type { Settings } from '@/lib/settings'
+import { api } from '@/api'
+import { useToast } from './Toast'
 import { Dropdown, DropdownItem } from './Dropdown'
 import IconFolderGit2 from '~icons/lucide/folder-git-2'
 import IconGitBranch from '~icons/lucide/git-branch'
@@ -40,6 +42,7 @@ interface Props {
   repo: string | null
   onSelectRepo: (path: string) => void
   onAddRepo: () => void
+  onSubmitRepo: (path: string) => Promise<void>
   onRepoContextMenu: (path: string, x: number, y: number) => void
   repoContextMenuOpen?: boolean
   data: GraphData | null
@@ -102,6 +105,7 @@ export function Toolbar(p: Props) {
             repo={p.repo}
             onSelectRepo={p.onSelectRepo}
             onAddRepo={p.onAddRepo}
+            onSubmitRepo={p.onSubmitRepo}
             onRepoContextMenu={p.onRepoContextMenu}
             close={close}
           />
@@ -349,19 +353,70 @@ export function Toolbar(p: Props) {
 }
 
 function RepositoryFilter(
-  p: Pick<Props, 'repos' | 'repo' | 'onSelectRepo' | 'onAddRepo' | 'onRepoContextMenu'> & {
+  p: Pick<
+    Props,
+    'repos' | 'repo' | 'onSelectRepo' | 'onAddRepo' | 'onSubmitRepo' | 'onRepoContextMenu'
+  > & {
     close: () => void
   },
 ) {
   const [query, setQuery] = useState('')
   const [highlightedPath, setHighlightedPath] = useState(p.repo)
+  const [checked, setChecked] = useState<{
+    path: string
+    repo: RepoInfo | null
+    error?: string
+  } | null>(null)
+  const [submitting, setSubmitting] = useState(false)
+  const toast = useToast()
   const input = useRef<HTMLInputElement>(null)
   const highlightedRow = useRef<HTMLDivElement>(null)
-  const needle = query.trim().toLowerCase()
+  const path = query.trim().replace(/^(["'])(.*)\1$/, '$2')
+  const isPath = /^(?:[a-zA-Z]:[\\/]|[\\/]|\.{1,2}[\\/])/.test(path)
+  const checking = isPath && checked?.path !== path
+  const resolvedRepo = isPath && checked?.path === path ? checked.repo : null
+  const newRepo = resolvedRepo && !p.repos.some((r) => r.path === resolvedRepo.path)
+  const needle = path.toLowerCase()
   const filteredRepos = p.repos.filter(
     (r) => r.name.toLowerCase().includes(needle) || r.path.toLowerCase().includes(needle),
   )
-  const highlighted = filteredRepos.find((r) => r.path === highlightedPath) ?? filteredRepos[0]
+  if (resolvedRepo && !filteredRepos.some((r) => r.path === resolvedRepo.path))
+    filteredRepos.push(resolvedRepo)
+  const highlighted =
+    filteredRepos.find((r) => r.path === highlightedPath) ?? resolvedRepo ?? filteredRepos[0]
+
+  useEffect(() => {
+    if (!isPath) return
+    let stale = false
+    const timer = setTimeout(() => {
+      api.resolveRepo(path).then(
+        ({ repo }) => !stale && setChecked({ path, repo }),
+        (e: Error) => !stale && setChecked({ path, repo: null, error: e.message }),
+      )
+    }, 150)
+    return () => {
+      stale = true
+      clearTimeout(timer)
+    }
+  }, [path, isPath])
+
+  const select = async (r: RepoInfo) => {
+    if (submitting) return
+    if (!newRepo || r.path !== resolvedRepo?.path) {
+      p.close()
+      p.onSelectRepo(r.path)
+      return
+    }
+    setSubmitting(true)
+    try {
+      await p.onSubmitRepo(r.path)
+      p.close()
+    } catch (e) {
+      toast.show('error', 'Could not add repository', (e as Error).message)
+    } finally {
+      setSubmitting(false)
+    }
+  }
 
   useEffect(() => {
     input.current?.focus()
@@ -387,9 +442,10 @@ function RepositoryFilter(
           ref={input}
           type="text"
           className="w-full"
-          placeholder="Search repositories"
+          placeholder="Search repositories or paste a path"
           aria-label="Search repositories"
           value={query}
+          disabled={submitting}
           onChange={(e) => {
             setQuery(e.target.value)
             setHighlightedPath(null)
@@ -408,10 +464,7 @@ function RepositoryFilter(
             if (e.key !== 'Enter') return
             e.preventDefault()
             e.stopPropagation()
-            if (highlighted) {
-              p.close()
-              p.onSelectRepo(highlighted.path)
-            }
+            if (highlighted) void select(highlighted)
           }}
         />
       </div>
@@ -422,12 +475,14 @@ function RepositoryFilter(
           onContextMenu={(e) => {
             e.preventDefault()
             e.stopPropagation()
+            if (newRepo && r.path === resolvedRepo?.path) return
             p.onRepoContextMenu(r.path, e.clientX, e.clientY)
           }}
           onKeyDown={(e) => {
             if (e.key !== 'ContextMenu' && !(e.shiftKey && e.key === 'F10')) return
             e.preventDefault()
             e.stopPropagation()
+            if (newRepo && r.path === resolvedRepo?.path) return
             const rect = e.currentTarget.getBoundingClientRect()
             p.onRepoContextMenu(r.path, rect.left, rect.bottom)
           }}
@@ -435,25 +490,44 @@ function RepositoryFilter(
           <DropdownItem
             className="min-w-0"
             active={r.path === highlighted?.path}
-            onClick={() => {
-              p.close()
-              p.onSelectRepo(r.path)
-            }}
+            disabled={submitting}
+            onClick={() => void select(r)}
           >
+            {newRepo &&
+              r.path === resolvedRepo?.path &&
+              (submitting ? (
+                <IconLoader className="w-4 h-4 shrink-0 animate-spin" />
+              ) : (
+                <IconPlus className="w-4 h-4 shrink-0" />
+              ))}
             <span className="flex flex-col min-w-0" title={r.path}>
-              <span className="truncate">{r.name}</span>
+              <span className="truncate">
+                {newRepo && r.path === resolvedRepo?.path ? `Add ${r.name}` : r.name}
+              </span>
               <span className="text-xs opacity-60 truncate mono">{r.path}</span>
             </span>
           </DropdownItem>
         </div>
       ))}
-      {filteredRepos.length === 0 && (
+      {checking && (
+        <div role="status" className="px-3 py-1 text-fg-dim flex items-center gap-2">
+          <IconLoader className="w-4 h-4 animate-spin" /> Checking repository…
+        </div>
+      )}
+      {filteredRepos.length === 0 && !checking && (
         <div className="px-3 py-1 text-fg-dim">
-          {needle ? 'No matching repositories' : 'No repositories'}
+          {isPath
+            ? checked?.error
+              ? 'Could not check repository path'
+              : 'No Git repository at this path'
+            : needle
+              ? 'No matching repositories'
+              : 'No repositories'}
         </div>
       )}
       <div className="context-menu-sep" />
       <DropdownItem
+        disabled={submitting}
         onClick={() => {
           p.close()
           p.onAddRepo()

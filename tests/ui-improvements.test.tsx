@@ -683,6 +683,103 @@ it('resets the repository highlight when filtering and ignores navigation with n
   )
 })
 
+it.each(['click', 'Enter'])('adds a pasted repository path with %s', async (method) => {
+  const repo = { path: 'C:\\Git\\new repo', name: 'new repo' }
+  const check = vi.spyOn(api, 'resolveRepo').mockResolvedValue({ repo })
+  const add = vi.spyOn(api, 'addRepo').mockResolvedValue({
+    repos: [{ path: 'R', name: 'Repo R' }, repo],
+    added: [repo],
+  })
+  render(<App />)
+  fireEvent.click(await screen.findByRole('button', { name: 'Repo R' }))
+  const search = screen.getByRole('textbox', { name: 'Search repositories' })
+  fireEvent.change(search, { target: { value: `  "${repo.path}"  ` } })
+  expect(screen.getByText('Checking repository…')).toBeTruthy()
+  const button = await screen.findByRole('button', { name: /Add new repo/ })
+  expect(check).toHaveBeenCalledWith(repo.path)
+  expect(add).not.toHaveBeenCalled()
+  if (method === 'click') fireEvent.click(button)
+  else fireEvent.keyDown(search, { key: 'Enter' })
+  await waitFor(() => expect(add).toHaveBeenCalledWith(repo.path))
+  await waitFor(() =>
+    expect(api.graph).toHaveBeenCalledWith(expect.objectContaining({ repo: repo.path })),
+  )
+  expect(screen.queryByRole('textbox', { name: 'Search repositories' })).toBeNull()
+})
+
+it('opens an already registered repository when a pasted path resolves to it', async () => {
+  vi.spyOn(api, 'resolveRepo').mockResolvedValue({ repo: { path: 'R', name: 'Repo R' } })
+  const add = vi.spyOn(api, 'addRepo')
+  render(<App />)
+  fireEvent.click(await screen.findByRole('button', { name: 'Repo R' }))
+  const search = screen.getByRole('textbox', { name: 'Search repositories' })
+  fireEvent.change(search, { target: { value: '/repo/src/' } })
+  await screen.findByRole('button', { name: /Repo R\s*R/ })
+  fireEvent.keyDown(search, { key: 'Enter' })
+  expect(add).not.toHaveBeenCalled()
+  expect(screen.queryByRole('textbox', { name: 'Search repositories' })).toBeNull()
+})
+
+it('ignores stale path checks and does not probe ordinary search text', async () => {
+  let finish!: (result: Awaited<ReturnType<typeof api.resolveRepo>>) => void
+  const check = vi
+    .spyOn(api, 'resolveRepo')
+    .mockImplementationOnce(
+      () =>
+        new Promise((resolve) => {
+          finish = resolve
+        }),
+    )
+    .mockResolvedValue({ repo: null })
+  render(<App />)
+  fireEvent.click(await screen.findByRole('button', { name: 'Repo R' }))
+  const search = screen.getByRole('textbox', { name: 'Search repositories' })
+  vi.useFakeTimers()
+  fireEvent.change(search, { target: { value: 'ordinary search' } })
+  await act(async () => {
+    await vi.advanceTimersByTimeAsync(200)
+  })
+  expect(check).not.toHaveBeenCalled()
+  fireEvent.change(search, { target: { value: '/old' } })
+  await act(async () => {
+    await vi.advanceTimersByTimeAsync(150)
+  })
+  fireEvent.change(search, { target: { value: '/partial' } })
+  fireEvent.change(search, { target: { value: '/missing' } })
+  await act(async () => {
+    await vi.advanceTimersByTimeAsync(150)
+  })
+  expect(check.mock.calls).toEqual([['/old'], ['/missing']])
+  await act(async () => finish({ repo: { path: '/old', name: 'old' } }))
+  expect(screen.getByText('No Git repository at this path')).toBeTruthy()
+  expect(screen.queryByRole('button', { name: /Add old/ })).toBeNull()
+})
+
+it('keeps the filter open on add failure and prevents duplicate submissions', async () => {
+  vi.spyOn(api, 'resolveRepo').mockResolvedValue({ repo: { path: '/new', name: 'new' } })
+  let reject!: (error: Error) => void
+  const add = vi.spyOn(api, 'addRepo').mockImplementation(
+    () =>
+      new Promise((_resolve, fail) => {
+        reject = fail
+      }),
+  )
+  render(<App />)
+  fireEvent.click(await screen.findByRole('button', { name: 'Repo R' }))
+  const search = screen.getByRole('textbox', { name: 'Search repositories' })
+  fireEvent.change(search, { target: { value: '/new' } })
+  const button = await screen.findByRole('button', { name: /^Add new/ })
+  fireEvent.click(button)
+  expect(button).toHaveProperty('disabled', true)
+  fireEvent.click(button)
+  fireEvent.keyDown(search, { key: 'Enter' })
+  expect(add).toHaveBeenCalledTimes(1)
+  await act(async () => reject(new Error('Repository disappeared')))
+  expect(screen.getByText('Repository disappeared')).toBeTruthy()
+  expect(screen.getByRole('textbox', { name: 'Search repositories' })).toBe(search)
+  expect(button).toHaveProperty('disabled', false)
+})
+
 it('reveals the repository under the context menu without switching repositories', async () => {
   vi.mocked(api.repos).mockResolvedValue({
     repos: [
