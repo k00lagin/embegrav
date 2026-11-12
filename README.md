@@ -100,6 +100,8 @@ jsdom; typechecking includes the test files.
   resets its width on double-click.
 - Repository switcher, branch filter dropdown, "Show Remote Branches" toggle,
   commit ordering (date / author date / topological), "Load More Commits".
+  Pasting a path into the switcher adds that repository; a path to an existing
+  folder without one offers to initialize it (`git init`) instead.
 - Find widget (message, author, e-mail, hash, ref names) with match stepping.
 - Commit details panel: metadata, message, parents (clickable), changed files
   rendered with Pierre's file tree, per-file diff viewer (unified / split,
@@ -219,21 +221,22 @@ All endpoints are under `/api` and take JSON bodies. Every endpoint except
 `POST /auth/pair` requires `Authorization: Bearer <session>`; `GET /events`
 takes it as `?session=` because `EventSource` cannot send headers.
 
-| Endpoint              | Purpose                                |
-| --------------------- | -------------------------------------- |
-| `POST /auth/pair`     | trade a pairing token for a session    |
-| `POST /auth/session`  | check the current session              |
-| `GET /repos`          | registered repositories                |
-| `POST /repos`         | register a path (`{ path }`)           |
-| `POST /graph`         | commits, refs, stashes, status, state  |
-| `POST /commit`        | commit details + changed files         |
-| `POST /uncommitted`   | staged / unstaged files                |
-| `POST /compare`       | files changed between two revisions    |
-| `POST /file-diff`     | unified patch for one file             |
-| `POST /file-content`  | full file contents at a revision       |
-| `GET /github/account` | GitHub user, organizations, strategy   |
-| `POST /action`        | run a git action (`{ action, args }`)  |
-| `GET /events`         | SSE stream of repository change events |
+| Endpoint              | Purpose                                    |
+| --------------------- | ------------------------------------------ |
+| `POST /auth/pair`     | trade a pairing token for a session        |
+| `POST /auth/session`  | check the current session                  |
+| `GET /repos`          | registered repositories                    |
+| `POST /repos`         | register a path (`{ path }`)               |
+| `POST /repos/init`    | initialize a repo in a folder (`{ path }`) |
+| `POST /graph`         | commits, refs, stashes, status, state      |
+| `POST /commit`        | commit details + changed files             |
+| `POST /uncommitted`   | staged / unstaged files                    |
+| `POST /compare`       | files changed between two revisions        |
+| `POST /file-diff`     | unified patch for one file                 |
+| `POST /file-content`  | full file contents at a revision           |
+| `GET /github/account` | GitHub user, organizations, strategy       |
+| `POST /action`        | run a git action (`{ action, args }`)      |
+| `GET /events`         | SSE stream of repository change events     |
 
 Action names and payloads are defined in `shared/actions.ts` and validated before
 dispatch. Boolean options are JSON booleans. The API also retains options that

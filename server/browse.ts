@@ -64,5 +64,9 @@ export async function browse(input: string): Promise<DirectoryListing> {
       }),
   )
   entries.sort((a, b) => a.name.localeCompare(b.name))
-  return { directory: withTrailingSeparator(directory), entries }
+  const isRepo = await stat(join(directory, '.git')).then(
+    () => true,
+    () => false,
+  )
+  return { directory: withTrailingSeparator(directory), isRepo, entries }
 }

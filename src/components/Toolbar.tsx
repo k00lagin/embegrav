@@ -13,6 +13,7 @@ import IconDownload from '~icons/lucide/download'
 import IconUpload from '~icons/lucide/upload'
 import IconSettings from '~icons/lucide/settings'
 import IconPlus from '~icons/lucide/plus'
+import IconFolderPlus from '~icons/lucide/folder-plus'
 import IconX from '~icons/lucide/x'
 import IconChevronUp from '~icons/lucide/chevron-up'
 import IconChevronDown from '~icons/lucide/chevron-down'
@@ -43,6 +44,8 @@ interface Props {
   onSelectRepo: (path: string) => void
   onAddRepo: () => void
   onSubmitRepo: (path: string) => Promise<void>
+  /** Initialize a git repository in a folder that has none and open it */
+  onInitRepo: (path: string) => Promise<void>
   onRepoContextMenu: (path: string, x: number, y: number) => void
   repoContextMenuOpen?: boolean
   data: GraphData | null
@@ -106,6 +109,7 @@ export function Toolbar(p: Props) {
             onSelectRepo={p.onSelectRepo}
             onAddRepo={p.onAddRepo}
             onSubmitRepo={p.onSubmitRepo}
+            onInitRepo={p.onInitRepo}
             onRepoContextMenu={p.onRepoContextMenu}
             close={close}
           />
@@ -355,7 +359,13 @@ export function Toolbar(p: Props) {
 function RepositoryFilter(
   p: Pick<
     Props,
-    'repos' | 'repo' | 'onSelectRepo' | 'onAddRepo' | 'onSubmitRepo' | 'onRepoContextMenu'
+    | 'repos'
+    | 'repo'
+    | 'onSelectRepo'
+    | 'onAddRepo'
+    | 'onSubmitRepo'
+    | 'onInitRepo'
+    | 'onRepoContextMenu'
   > & {
     close: () => void
   },
@@ -365,6 +375,7 @@ function RepositoryFilter(
   const [checked, setChecked] = useState<{
     path: string
     repo: RepoInfo | null
+    canInit: boolean
     error?: string
   } | null>(null)
   const [submitting, setSubmitting] = useState(false)
@@ -375,6 +386,18 @@ function RepositoryFilter(
   const isPath = /^(?:[a-zA-Z]:[\\/]|[\\/]|\.{1,2}[\\/])/.test(path)
   const checking = isPath && checked?.path !== path
   const resolvedRepo = isPath && checked?.path === path ? checked.repo : null
+  const initTarget =
+    isPath && checked?.path === path && !checked.repo && checked.canInit
+      ? {
+          path,
+          name:
+            path
+              .replace(/[\\/]+$/, '')
+              .split(/[\\/]/)
+              .filter(Boolean)
+              .pop() ?? path,
+        }
+      : null
   const newRepo = resolvedRepo && !p.repos.some((r) => r.path === resolvedRepo.path)
   const needle = path.toLowerCase()
   const filteredRepos = p.repos.filter(
@@ -390,8 +413,8 @@ function RepositoryFilter(
     let stale = false
     const timer = setTimeout(() => {
       api.resolveRepo(path).then(
-        ({ repo }) => !stale && setChecked({ path, repo }),
-        (e: Error) => !stale && setChecked({ path, repo: null, error: e.message }),
+        ({ repo, canInit }) => !stale && setChecked({ path, repo, canInit }),
+        (e: Error) => !stale && setChecked({ path, repo: null, canInit: false, error: e.message }),
       )
     }, 150)
     return () => {
@@ -413,6 +436,19 @@ function RepositoryFilter(
       p.close()
     } catch (e) {
       toast.show('error', 'Could not add repository', (e as Error).message)
+    } finally {
+      setSubmitting(false)
+    }
+  }
+
+  const initialize = async () => {
+    if (!initTarget || submitting) return
+    setSubmitting(true)
+    try {
+      await p.onInitRepo(initTarget.path)
+      p.close()
+    } catch (e) {
+      toast.show('error', 'Could not initialize repository', (e as Error).message)
     } finally {
       setSubmitting(false)
     }
@@ -465,6 +501,7 @@ function RepositoryFilter(
             e.preventDefault()
             e.stopPropagation()
             if (highlighted) void select(highlighted)
+            else if (initTarget) void initialize()
           }}
         />
       </div>
@@ -509,12 +546,25 @@ function RepositoryFilter(
           </DropdownItem>
         </div>
       ))}
+      {initTarget && (
+        <DropdownItem active={!highlighted} disabled={submitting} onClick={() => void initialize()}>
+          {submitting ? (
+            <IconLoader className="w-4 h-4 shrink-0 animate-spin" />
+          ) : (
+            <IconFolderPlus className="w-4 h-4 shrink-0" />
+          )}
+          <span className="flex flex-col min-w-0" title={initTarget.path}>
+            <span className="truncate">Initialize {initTarget.name}</span>
+            <span className="text-xs opacity-60 truncate mono">{initTarget.path}</span>
+          </span>
+        </DropdownItem>
+      )}
       {checking && (
         <div role="status" className="px-3 py-1 text-fg-dim flex items-center gap-2">
           <IconLoader className="w-4 h-4 animate-spin" /> Checking repository…
         </div>
       )}
-      {filteredRepos.length === 0 && !checking && (
+      {filteredRepos.length === 0 && !checking && !initTarget && (
         <div className="px-3 py-1 text-fg-dim">
           {isPath
             ? checked?.error

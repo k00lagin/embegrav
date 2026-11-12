@@ -28,7 +28,7 @@ import {
   getGraph,
   getUncommittedDetails,
 } from './repo.ts'
-import { findRepo, getRepo, listRepos, registerPath, removeRepo } from './repos.ts'
+import { getRepo, initRepo, listRepos, registerPath, removeRepo, resolvePath } from './repos.ts'
 import { subscribe } from './watcher.ts'
 import { revealInFileExplorer, workingRevealPath } from './explorer.ts'
 import { isLocalRequest } from './local.ts'
@@ -175,7 +175,15 @@ api.post('/repos/resolve', async (c) => {
   const body = (await c.req.json()) as { path?: unknown }
   if (typeof body.path !== 'string' || !body.path.trim())
     return c.json({ error: 'path is required' }, 400)
-  return c.json({ repo: await findRepo(body.path) })
+  return c.json(await resolvePath(body.path))
+})
+
+api.post('/repos/init', async (c) => {
+  const body = (await c.req.json()) as { path?: unknown }
+  if (typeof body.path !== 'string' || !body.path.trim())
+    return c.json({ error: 'path is required' }, 400)
+  const added = await initRepo(body.path)
+  return c.json({ repos: listRepos(), added: [added] })
 })
 
 api.get('/capabilities', (c) => c.json({ revealInFileExplorer: isLocalRequest(c) }))

@@ -47,11 +47,20 @@ describe('server browse', () => {
   it('lists sub-directories and marks repositories', async () => {
     const r = await browse(root + sep)
     expect(r.directory).toBe(root + sep)
+    expect(r.isRepo).toBe(false)
     expect(r.entries).toEqual([
       { name: 'alpha', path: join(root, 'alpha'), isRepo: true },
       { name: 'Another', path: join(root, 'Another'), isRepo: false },
       { name: 'beta', path: join(root, 'beta'), isRepo: false },
     ])
+  })
+
+  it('marks the listed directory itself as a repository', async () => {
+    await mkdir(join(root, '.git'))
+    expect((await browse(root + sep)).isRepo).toBe(true)
+    // In prefix mode the parent directory is listed, so it stays a repository.
+    expect((await browse(join(root, 'a'))).isRepo).toBe(true)
+    expect((await browse(join(root, 'beta') + sep)).isRepo).toBe(false)
   })
 
   it('filters by a case-insensitive prefix and shows dot-folders on request', async () => {
@@ -68,12 +77,14 @@ describe('RepoPicker', () => {
   const listings: Record<string, DirectoryListing> = {
     '/src/': {
       directory: '/src/',
+      isRepo: false,
       entries: [
         { name: 'app', path: '/src/app', isRepo: true },
         { name: 'docs', path: '/src/docs', isRepo: false },
       ],
     },
-    '/src/docs/': { directory: '/src/docs/', entries: [] },
+    '/src/docs/': { directory: '/src/docs/', isRepo: false, entries: [] },
+    '/src/app/': { directory: '/src/app/', isRepo: true, entries: [] },
   }
   beforeEach(() => {
     vi.spyOn(api, 'browse').mockImplementation(async (path) => {
@@ -89,9 +100,17 @@ describe('RepoPicker', () => {
 
   it('navigates with the keyboard and adds the typed path', async () => {
     const onSubmit = vi.fn(async () => {})
-    render(<RepoPicker initialPath="/src/" onSubmit={onSubmit} onClose={() => {}} />, {
-      wrapper: ToastProvider,
-    })
+    render(
+      <RepoPicker
+        initialPath="/src/"
+        onSubmit={onSubmit}
+        onInit={vi.fn(async () => {})}
+        onClose={() => {}}
+      />,
+      {
+        wrapper: ToastProvider,
+      },
+    )
     const input = screen.getByLabelText('Repository path')
     await screen.findByText('docs')
 
@@ -111,9 +130,17 @@ describe('RepoPicker', () => {
     const onSubmit = vi.fn(async () => {
       throw new Error('No git repository found at /src/app')
     })
-    render(<RepoPicker initialPath="/src/" onSubmit={onSubmit} onClose={() => {}} />, {
-      wrapper: ToastProvider,
-    })
+    render(
+      <RepoPicker
+        initialPath="/src/"
+        onSubmit={onSubmit}
+        onInit={vi.fn(async () => {})}
+        onClose={() => {}}
+      />,
+      {
+        wrapper: ToastProvider,
+      },
+    )
     await screen.findByText('app')
     const row = screen.getByRole('option', { name: /app/ })
     fireEvent.click(within(row).getByRole('button', { name: 'Add' }))
@@ -127,10 +154,92 @@ describe('RepoPicker', () => {
 
   it('starts in the home directory when there is no current repository', async () => {
     vi.spyOn(api, 'browseHome').mockResolvedValue({ path: '/src/' })
-    render(<RepoPicker initialPath={null} onSubmit={async () => {}} onClose={() => {}} />, {
-      wrapper: ToastProvider,
-    })
+    render(
+      <RepoPicker
+        initialPath={null}
+        onSubmit={async () => {}}
+        onInit={async () => {}}
+        onClose={() => {}}
+      />,
+      {
+        wrapper: ToastProvider,
+      },
+    )
     expect(await screen.findByLabelText('Repository path')).toHaveProperty('value', '/src/')
     await screen.findByText('app')
+  })
+
+  it('initializes the listed folder when it has no repository', async () => {
+    const onInit = vi.fn(async () => {})
+    render(
+      <RepoPicker
+        initialPath="/src/docs/"
+        onSubmit={vi.fn(async () => {})}
+        onInit={onInit}
+        onClose={() => {}}
+      />,
+      { wrapper: ToastProvider },
+    )
+    await screen.findByText('No folders')
+    fireEvent.click(screen.getByRole('button', { name: 'Initialize' }))
+    await waitFor(() => expect(onInit).toHaveBeenCalledWith('/src/docs/'))
+  })
+
+  it('initializes the listed folder with Alt+Enter', async () => {
+    const onInit = vi.fn(async () => {})
+    render(
+      <RepoPicker
+        initialPath="/src/docs/"
+        onSubmit={vi.fn(async () => {})}
+        onInit={onInit}
+        onClose={() => {}}
+      />,
+      { wrapper: ToastProvider },
+    )
+    const input = screen.getByLabelText('Repository path')
+    await screen.findByText('No folders')
+    fireEvent.keyDown(input, { key: 'Enter', altKey: true })
+    await waitFor(() => expect(onInit).toHaveBeenCalledWith('/src/docs/'))
+  })
+
+  it('offers no initialization inside repositories or while typing a path prefix', async () => {
+    render(
+      <RepoPicker
+        initialPath="/src/app/"
+        onSubmit={vi.fn(async () => {})}
+        onInit={vi.fn(async () => {})}
+        onClose={() => {}}
+      />,
+      { wrapper: ToastProvider },
+    )
+    await screen.findByText('No folders')
+    expect(screen.queryByRole('button', { name: 'Initialize' })).toBeNull()
+    const input = screen.getByLabelText('Repository path')
+    fireEvent.change(input, { target: { value: '/src/do' } })
+    await screen.findByText('Directory not found: /src/do')
+    expect(screen.queryByRole('button', { name: 'Initialize' })).toBeNull()
+  })
+
+  it('shows initialization failures in a toast and keeps the picker open', async () => {
+    const onInit = vi.fn(async () => {
+      throw new Error('Permission denied')
+    })
+    render(
+      <RepoPicker
+        initialPath="/src/docs/"
+        onSubmit={vi.fn(async () => {})}
+        onInit={onInit}
+        onClose={() => {}}
+      />,
+      { wrapper: ToastProvider },
+    )
+    await screen.findByText('No folders')
+    fireEvent.click(screen.getByRole('button', { name: 'Initialize' }))
+    await waitFor(() => expect(onInit).toHaveBeenCalledWith('/src/docs/'))
+    expect(await screen.findByRole('alert')).toHaveProperty(
+      'textContent',
+      'Could not initialize repositoryPermission denied',
+    )
+    expect(screen.getByLabelText('Repository path')).toBeTruthy()
   })
 })

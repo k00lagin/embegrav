@@ -188,6 +188,12 @@ function Main({ initialRepo }: { initialRepo: string | null }) {
     if (r.added[0]) selectRepo(r.added[0].path)
     setRepoPickerOpen(false)
   }
+  const initializeRepo = async (path: string) => {
+    const r = await api.initRepo(path)
+    setRepos(r.repos)
+    if (r.added[0]) selectRepo(r.added[0].path)
+    setRepoPickerOpen(false)
+  }
   const restoreRepo = async (path: string, reselect: boolean) => {
     try {
       const r = await api.addRepo(path)
@@ -797,6 +803,7 @@ function Main({ initialRepo }: { initialRepo: string | null }) {
         onSelectRepo={selectRepo}
         onAddRepo={addRepo}
         onSubmitRepo={submitRepo}
+        onInitRepo={initializeRepo}
         onRepoContextMenu={onRepoContextMenu}
         repoContextMenuOpen={menu?.source === 'repository'}
         data={data}
@@ -1146,6 +1153,7 @@ function Main({ initialRepo }: { initialRepo: string | null }) {
         <RepoPicker
           initialPath={repo && parentPath(repo)}
           onSubmit={submitRepo}
+          onInit={initializeRepo}
           onClose={() => setRepoPickerOpen(false)}
         />
       )}

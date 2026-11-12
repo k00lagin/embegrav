@@ -8,6 +8,14 @@ export interface RepoInfo {
   name: string
 }
 
+/** Result of resolving a typed path for the repository pickers. */
+export interface ResolvedPath {
+  /** The repository enclosing the path, if any */
+  repo: RepoInfo | null
+  /** The path is an existing folder without a repository that can be initialized as one */
+  canInit: boolean
+}
+
 export interface DirectoryEntry {
   name: string
   path: string
@@ -18,6 +26,8 @@ export interface DirectoryEntry {
 export interface DirectoryListing {
   /** The listed directory */
   directory: string
+  /** The listed directory itself contains a `.git` entry */
+  isRepo: boolean
   entries: DirectoryEntry[]
 }
 

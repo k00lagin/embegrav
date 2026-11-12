@@ -11,6 +11,7 @@ import type {
   GraphData,
   GraphRequest,
   RepoInfo,
+  ResolvedPath,
   UncommittedDetails,
 } from '@shared/types'
 import { loadLocal } from './lib/settings'
@@ -92,9 +93,11 @@ export const api = {
   /** Resolves when the stored session is accepted by the server. */
   checkSession: () => post<{ ok: true }>('/api/auth/session', {}),
   repos: () => request<{ repos: RepoInfo[] }>('GET', '/api/repos'),
-  resolveRepo: (path: string) => post<{ repo: RepoInfo | null }>('/api/repos/resolve', { path }),
+  resolveRepo: (path: string) => post<ResolvedPath>('/api/repos/resolve', { path }),
   capabilities: () => request<{ revealInFileExplorer: boolean }>('GET', '/api/capabilities'),
   addRepo: (path: string) => post<{ repos: RepoInfo[]; added: RepoInfo[] }>('/api/repos', { path }),
+  initRepo: (path: string) =>
+    post<{ repos: RepoInfo[]; added: RepoInfo[] }>('/api/repos/init', { path }),
   removeRepo: (path: string) => request<{ repos: RepoInfo[] }>('DELETE', '/api/repos', { path }),
   revealRepo: (path: string, filePath?: string) =>
     post<{ ok: true }>('/api/repos/reveal', { path, filePath }),

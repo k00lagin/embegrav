@@ -1,7 +1,7 @@
 import { readdir, stat } from 'node:fs/promises'
 import { basename, resolve } from 'node:path'
-import type { RepoInfo } from '../shared/types.ts'
-import { repoRoot } from './git.ts'
+import type { RepoInfo, ResolvedPath } from '../shared/types.ts'
+import { git, repoRoot } from './git.ts'
 
 const repos = new Map<string, RepoInfo>()
 
@@ -23,6 +23,47 @@ export async function findRepo(p: string): Promise<RepoInfo | null> {
 async function addRepoPath(p: string): Promise<RepoInfo | null> {
   const repo = await findRepo(p)
   if (repo) repos.set(repo.path, repo)
+  return repo
+}
+
+/** Resolve a typed path: an enclosing repository, or whether the folder could be initialized as one. */
+export async function resolvePath(p: string): Promise<ResolvedPath> {
+  const repo = await findRepo(p)
+  if (repo) return { repo, canInit: false }
+  try {
+    return { repo: null, canInit: (await stat(normalize(p))).isDirectory() }
+  } catch {
+    return { repo: null, canInit: false }
+  }
+}
+
+/**
+ * Initialize a git repository in an existing folder and register it. The path
+ * must name the folder itself: a folder inside another repository is refused
+ * instead of silently creating a nested repository.
+ */
+export async function initRepo(p: string): Promise<RepoInfo> {
+  const abs = normalize(p)
+  let isDirectory: boolean
+  try {
+    isDirectory = (await stat(abs)).isDirectory()
+  } catch {
+    throw new Error(`Directory not found: ${abs}`)
+  }
+  if (!isDirectory) throw new Error(`Not a directory: ${abs}`)
+  const existing = await findRepo(abs)
+  if (existing) {
+    const samePath =
+      process.platform === 'win32'
+        ? existing.path.toLowerCase() === abs.toLowerCase()
+        : existing.path === abs
+    if (!samePath) throw new Error(`${abs} is inside the repository at ${existing.path}`)
+    repos.set(existing.path, existing)
+    return existing
+  }
+  await git(abs, ['init'])
+  const repo: RepoInfo = { path: abs, name: basename(abs) || abs }
+  repos.set(abs, repo)
   return repo
 }
 

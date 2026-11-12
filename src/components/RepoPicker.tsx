@@ -1,11 +1,12 @@
 import { useEffect, useRef, useState, type KeyboardEvent as ReactKeyboardEvent } from 'react'
 import type { DirectoryListing } from '@shared/types'
 import { api } from '@/api'
-import { childPath, directoryPart, parentPath } from '@/lib/paths'
+import { childPath, directoryPart, hasTrailingSeparator, parentPath } from '@/lib/paths'
 import { useToast } from './Toast'
 import IconX from '~icons/lucide/x'
 import IconFolder from '~icons/lucide/folder'
 import IconFolderGit from '~icons/lucide/folder-git-2'
+import IconFolderPlus from '~icons/lucide/folder-plus'
 import IconFolderUp from '~icons/lucide/folder-up'
 import IconLoader from '~icons/lucide/loader-circle'
 
@@ -14,10 +15,12 @@ interface Props {
   initialPath: string | null
   /** Register the path; a rejection is shown in a toast and the picker stays open */
   onSubmit: (path: string) => Promise<void>
+  /** Initialize a git repository in a folder; a rejection is shown in a toast and the picker stays open */
+  onInit: (path: string) => Promise<void>
   onClose: () => void
 }
 
-export function RepoPicker({ initialPath, onSubmit, onClose }: Props) {
+export function RepoPicker({ initialPath, onSubmit, onInit, onClose }: Props) {
   const toast = useToast()
   const [input, setInput] = useState(initialPath ?? '')
   const [listing, setListing] = useState<DirectoryListing | null>(null)
@@ -25,11 +28,15 @@ export function RepoPicker({ initialPath, onSubmit, onClose }: Props) {
   /** The input the current listing (or error) belongs to */
   const [loadedInput, setLoadedInput] = useState<string | null>(null)
   const [submitting, setSubmitting] = useState(false)
+  const [initializing, setInitializing] = useState(false)
   const [error, setError] = useState<string | null>(null)
   const listRef = useRef<HTMLDivElement>(null)
   const entries = listing?.entries ?? []
   const parent = parentPath(directoryPart(input))
   const loading = input.trim() !== '' && loadedInput !== input
+  // The input names the listed folder itself only when it ends with a separator;
+  // without one the last segment is a filter prefix typed so far.
+  const canInitHere = listing !== null && !listing.isRepo && hasTrailingSeparator(input.trim())
 
   useEffect(() => {
     if (initialPath !== null) return
@@ -95,6 +102,19 @@ export function RepoPicker({ initialPath, onSubmit, onClose }: Props) {
     }
   }
 
+  const initialize = async () => {
+    if (!listing || submitting || initializing) return
+    setInitializing(true)
+    setError(null)
+    try {
+      await onInit(listing.directory)
+    } catch (e) {
+      toast.show('error', 'Could not initialize repository', (e as Error).message)
+    } finally {
+      setInitializing(false)
+    }
+  }
+
   const onKeyDown = (e: ReactKeyboardEvent<HTMLInputElement>) => {
     if (e.key === 'ArrowDown') {
       e.preventDefault()
@@ -104,6 +124,10 @@ export function RepoPicker({ initialPath, onSubmit, onClose }: Props) {
       setHighlighted((i) => Math.max(i - 1, 0))
     } else if (e.key === 'Enter') {
       e.preventDefault()
+      if (e.altKey && canInitHere) {
+        void initialize()
+        return
+      }
       const entry = entries[highlighted]
       if (e.ctrlKey || e.metaKey || !entry) void submit(input)
       else setInput(childPath(input, entry.name))
@@ -156,6 +180,27 @@ export function RepoPicker({ initialPath, onSubmit, onClose }: Props) {
           </button>
         </div>
         <div ref={listRef} className="flex-1 min-h-0 overflow-y-auto py-1" role="listbox">
+          {canInitHere && (
+            <div
+              className="group flex items-center gap-2 px-4 py-[3px] border-b border-border cursor-pointer"
+              onClick={() => void initialize()}
+            >
+              <IconFolderPlus className="w-4 h-4 shrink-0 opacity-70" />
+              <span className="flex-1 min-w-0 truncate">This folder has no repository</span>
+              <button
+                type="button"
+                className="btn py-0"
+                onClick={(e) => {
+                  e.stopPropagation()
+                  void initialize()
+                }}
+                disabled={submitting || initializing}
+                title="Initialize a git repository in this folder (Alt+Enter)"
+              >
+                {initializing ? <IconLoader className="w-4 h-4 animate-spin" /> : 'Initialize'}
+              </button>
+            </div>
+          )}
           {entries.map((entry, i) => (
             <div
               key={entry.path}
@@ -203,7 +248,9 @@ export function RepoPicker({ initialPath, onSubmit, onClose }: Props) {
           }`}
         >
           {error ??
-            '↑↓ select · Enter open folder · Backspace parent folder · Ctrl+Enter add path · a folder of repositories adds all of them'}
+            (canInitHere
+              ? '↑↓ select · Enter open folder · Alt+Enter initialize repository · Backspace parent folder · Ctrl+Enter add path'
+              : '↑↓ select · Enter open folder · Backspace parent folder · Ctrl+Enter add path · a folder of repositories adds all of them')}
         </div>
       </div>
     </div>

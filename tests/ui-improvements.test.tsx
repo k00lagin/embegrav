@@ -686,7 +686,7 @@ it('resets the repository highlight when filtering and ignores navigation with n
 
 it.each(['click', 'Enter'])('adds a pasted repository path with %s', async (method) => {
   const repo = { path: 'C:\\Git\\new repo', name: 'new repo' }
-  const check = vi.spyOn(api, 'resolveRepo').mockResolvedValue({ repo })
+  const check = vi.spyOn(api, 'resolveRepo').mockResolvedValue({ repo, canInit: false })
   const add = vi.spyOn(api, 'addRepo').mockResolvedValue({
     repos: [{ path: 'R', name: 'Repo R' }, repo],
     added: [repo],
@@ -708,8 +708,53 @@ it.each(['click', 'Enter'])('adds a pasted repository path with %s', async (meth
   expect(screen.queryByRole('textbox', { name: 'Search repositories' })).toBeNull()
 })
 
+it.each(['click', 'Enter'])(
+  'initializes a pasted folder without a repository with %s',
+  async (method) => {
+    const folder = { path: 'C:\\Git\\new project', name: 'new project' }
+    const check = vi.spyOn(api, 'resolveRepo').mockResolvedValue({ repo: null, canInit: true })
+    const init = vi.spyOn(api, 'initRepo').mockResolvedValue({
+      repos: [{ path: 'R', name: 'Repo R' }, folder],
+      added: [folder],
+    })
+    render(<App />)
+    fireEvent.click(await screen.findByRole('button', { name: 'Repo R' }))
+    const search = screen.getByRole('textbox', { name: 'Search repositories' })
+    fireEvent.change(search, { target: { value: folder.path } })
+    const button = await screen.findByRole('button', { name: /Initialize new project/ })
+    expect(screen.queryByText('No Git repository at this path')).toBeNull()
+    expect(check).toHaveBeenCalledWith(folder.path)
+    expect(init).not.toHaveBeenCalled()
+    if (method === 'click') fireEvent.click(button)
+    else fireEvent.keyDown(search, { key: 'Enter' })
+    await waitFor(() => expect(init).toHaveBeenCalledWith(folder.path))
+    await waitFor(() =>
+      expect(api.graph).toHaveBeenCalledWith(expect.objectContaining({ repo: folder.path })),
+    )
+    expect(screen.queryByRole('textbox', { name: 'Search repositories' })).toBeNull()
+  },
+)
+
+it('keeps the filter open when initialization fails', async () => {
+  vi.spyOn(api, 'resolveRepo').mockResolvedValue({ repo: null, canInit: true })
+  const init = vi.spyOn(api, 'initRepo').mockRejectedValue(new Error('git is missing'))
+  render(<App />)
+  fireEvent.click(await screen.findByRole('button', { name: 'Repo R' }))
+  const search = screen.getByRole('textbox', { name: 'Search repositories' })
+  fireEvent.change(search, { target: { value: 'C:\\Git\\new' } })
+  const button = await screen.findByRole('button', { name: /Initialize new/ })
+  fireEvent.click(button)
+  await waitFor(() => expect(init).toHaveBeenCalledWith('C:\\Git\\new'))
+  expect(await screen.findByText('git is missing')).toBeTruthy()
+  expect(screen.getByRole('textbox', { name: 'Search repositories' })).toBe(search)
+  expect(button).toHaveProperty('disabled', false)
+})
+
 it('opens an already registered repository when a pasted path resolves to it', async () => {
-  vi.spyOn(api, 'resolveRepo').mockResolvedValue({ repo: { path: 'R', name: 'Repo R' } })
+  vi.spyOn(api, 'resolveRepo').mockResolvedValue({
+    repo: { path: 'R', name: 'Repo R' },
+    canInit: false,
+  })
   const add = vi.spyOn(api, 'addRepo')
   render(<App />)
   fireEvent.click(await screen.findByRole('button', { name: 'Repo R' }))
@@ -731,7 +776,7 @@ it('ignores stale path checks and does not probe ordinary search text', async ()
           finish = resolve
         }),
     )
-    .mockResolvedValue({ repo: null })
+    .mockResolvedValue({ repo: null, canInit: false })
   render(<App />)
   fireEvent.click(await screen.findByRole('button', { name: 'Repo R' }))
   const search = screen.getByRole('textbox', { name: 'Search repositories' })
@@ -751,13 +796,16 @@ it('ignores stale path checks and does not probe ordinary search text', async ()
     await vi.advanceTimersByTimeAsync(150)
   })
   expect(check.mock.calls).toEqual([['/old'], ['/missing']])
-  await act(async () => finish({ repo: { path: '/old', name: 'old' } }))
+  await act(async () => finish({ repo: { path: '/old', name: 'old' }, canInit: false }))
   expect(screen.getByText('No Git repository at this path')).toBeTruthy()
   expect(screen.queryByRole('button', { name: /Add old/ })).toBeNull()
 })
 
 it('keeps the filter open on add failure and prevents duplicate submissions', async () => {
-  vi.spyOn(api, 'resolveRepo').mockResolvedValue({ repo: { path: '/new', name: 'new' } })
+  vi.spyOn(api, 'resolveRepo').mockResolvedValue({
+    repo: { path: '/new', name: 'new' },
+    canInit: false,
+  })
   let reject!: (error: Error) => void
   const add = vi.spyOn(api, 'addRepo').mockImplementation(
     () =>
