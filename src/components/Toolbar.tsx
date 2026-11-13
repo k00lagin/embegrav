@@ -1,6 +1,7 @@
-import { useEffect, useRef, useState, type ReactNode } from 'react'
+import { useEffect, useMemo, useRef, useState, type ReactNode } from 'react'
 import { GITHUB_REPO_NAME_RE } from '@shared/github'
 import type { GitHubRepoMatch, GraphData, RepoInfo } from '@shared/types'
+import { sortByFrecency } from '@/lib/frecency'
 import type { Settings } from '@/lib/settings'
 import { api } from '@/api'
 import { useToast } from './Toast'
@@ -416,7 +417,9 @@ function RepositoryFilter(
   const offerInit = !!current && !current.repo && current.canInit
   const newRepo = resolvedRepo && !p.repos.some((r) => r.path === resolvedRepo.path)
   const needle = path.toLowerCase()
-  const filteredRepos = p.repos.filter(
+  // Ranked once per opening, so rows do not move while the menu is open.
+  const rankedRepos = useMemo(() => sortByFrecency(p.repos), [p.repos])
+  const filteredRepos = rankedRepos.filter(
     (r) => r.name.toLowerCase().includes(needle) || r.path.toLowerCase().includes(needle),
   )
   if (resolvedRepo && !filteredRepos.some((r) => r.path === resolvedRepo.path))

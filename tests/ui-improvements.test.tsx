@@ -654,6 +654,33 @@ it('moves the repository highlight with arrows while keeping search focused and 
   expect(highlighted()).toBe('Repo SS')
 })
 
+it('lists the repositories opened most often and recently first', async () => {
+  vi.mocked(api.repos).mockResolvedValue({
+    repos: [
+      { path: 'R', name: 'Repo R' },
+      { path: 'S', name: 'Repo S' },
+      { path: 'T', name: 'Repo T' },
+    ],
+  })
+  render(<App />)
+  const names = () =>
+    [...document.querySelectorAll('.dropdown-item')]
+      .map((el) => el.querySelector('.truncate')?.textContent)
+      .filter((name) => name?.startsWith('Repo'))
+  const open = async (current: string, next: string) => {
+    fireEvent.click(await screen.findByRole('button', { name: current }))
+    fireEvent.click(screen.getByRole('button', { name: `${next}${next.slice(-1)}` }))
+  }
+  fireEvent.click(await screen.findByRole('button', { name: 'Repo R' }))
+  expect(names()).toEqual(['Repo R', 'Repo S', 'Repo T'])
+  fireEvent.click(screen.getByRole('button', { name: 'Repo R' }))
+  await open('Repo R', 'Repo T')
+  await open('Repo T', 'Repo S')
+  await open('Repo S', 'Repo T')
+  fireEvent.click(await screen.findByRole('button', { name: 'Repo T' }))
+  expect(names()).toEqual(['Repo T', 'Repo S', 'Repo R'])
+})
+
 it('resets the repository highlight when filtering and ignores navigation with no matches', async () => {
   vi.mocked(api.repos).mockResolvedValue({
     repos: [

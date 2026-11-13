@@ -15,6 +15,7 @@ import { UnauthorizedError, api, subscribeRepoEvents } from './api'
 import { layoutGraph } from './graph/layout'
 import { UNCOMMITTED, pluralize, shortHash } from './lib/format'
 import { loadLocal, saveLocal, useSettings } from './lib/settings'
+import { recordRepoVisit } from './lib/frecency'
 import { COLUMNS, useColumnLayout } from './lib/columns'
 import { parentPath } from './lib/paths'
 import { useRepoActions } from './hooks/useRepoActions'
@@ -141,6 +142,14 @@ function Main({ initialRepo }: { initialRepo: string | null }) {
     setExtraCommits(0)
     pendingNavigation.current = null
   }, [])
+  /** Select a repository the user opened, counting the visit toward its rank in the menu. */
+  const openRepo = useCallback(
+    (path: string) => {
+      recordRepoVisit(path)
+      selectRepo(path)
+    },
+    [selectRepo],
+  )
   useEffect(() => {
     // A `?repo=` link registers and opens that path; otherwise reopen the last repository.
     type Loaded = { list: RepoInfo[]; open: string | null }
@@ -167,7 +176,8 @@ function Main({ initialRepo }: { initialRepo: string | null }) {
           null,
           (value): value is string | null => value === null || typeof value === 'string',
         )
-        selectRepo(open ?? list.find((x) => x.path === last)?.path ?? list[0]?.path ?? null)
+        if (open) openRepo(open)
+        else selectRepo(list.find((x) => x.path === last)?.path ?? list[0]?.path ?? null)
       })
       .catch((e: Error) => {
         // The auth gate replaces the app with the pairing screen instead.
@@ -175,7 +185,7 @@ function Main({ initialRepo }: { initialRepo: string | null }) {
           toast.show('error', 'Could not load repositories', e.message)
         }
       })
-  }, [toast, selectRepo, initialRepo])
+  }, [toast, selectRepo, openRepo, initialRepo])
   useEffect(() => {
     if (repo) saveLocal('lastRepo', repo)
   }, [repo])
@@ -185,19 +195,19 @@ function Main({ initialRepo }: { initialRepo: string | null }) {
   const submitRepo = async (path: string) => {
     const r = await api.addRepo(path)
     setRepos(r.repos)
-    if (r.added[0]) selectRepo(r.added[0].path)
+    if (r.added[0]) openRepo(r.added[0].path)
     setRepoPickerOpen(false)
   }
   const initializeRepo = async (path: string) => {
     const r = await api.initRepo(path)
     setRepos(r.repos)
-    if (r.added[0]) selectRepo(r.added[0].path)
+    if (r.added[0]) openRepo(r.added[0].path)
     setRepoPickerOpen(false)
   }
   const cloneRepo = async (path: string, match: GitHubRepoMatch) => {
     const r = await api.cloneRepo(path, match.fullName, match.via)
     setRepos(r.repos)
-    if (r.added[0]) selectRepo(r.added[0].path)
+    if (r.added[0]) openRepo(r.added[0].path)
   }
   const restoreRepo = async (path: string, reselect: boolean) => {
     try {
@@ -805,7 +815,7 @@ function Main({ initialRepo }: { initialRepo: string | null }) {
       <Toolbar
         repos={repos}
         repo={repo}
-        onSelectRepo={selectRepo}
+        onSelectRepo={openRepo}
         onAddRepo={addRepo}
         onSubmitRepo={submitRepo}
         onInitRepo={initializeRepo}
