@@ -1,9 +1,10 @@
-import { afterEach, beforeEach, expect, it } from 'vitest'
+import { afterEach, beforeEach, expect, it, vi } from 'vitest'
 import { mkdtemp, mkdir, rm, stat, writeFile } from 'node:fs/promises'
 import { tmpdir } from 'node:os'
 import { join, resolve } from 'node:path'
 import { git } from '../server/git.ts'
 import {
+  cloneRepo,
   findRepo,
   initRepo,
   listRepos,
@@ -64,18 +65,22 @@ it('reuses a registered root for a pasted subdirectory', async () => {
   expect(listRepos()).toEqual([registered])
 })
 
-it('resolves typed paths and reports folders that can be initialized', async () => {
+it('resolves typed paths and reports folders that can be initialized or cloned into', async () => {
   const plain = join(root, 'plain')
   await mkdir(plain)
   await mkdir(join(repo, 'src'))
   const expected = { path: resolve(repo), name: 'my repo' }
-  expect(await resolvePath(repo)).toEqual({ repo: expected, canInit: false })
-  expect(await resolvePath(join(repo, 'src'))).toEqual({ repo: expected, canInit: false })
-  expect(await resolvePath(root)).toEqual({ repo: null, canInit: true })
-  expect(await resolvePath(plain)).toEqual({ repo: null, canInit: true })
-  expect(await resolvePath(join(root, 'missing'))).toEqual({ repo: null, canInit: false })
+  const none = { repo: null, canInit: false, canClone: false }
+  expect(await resolvePath(repo)).toEqual({ ...none, repo: expected })
+  // An empty folder inside a repository resolves to that repository.
+  expect(await resolvePath(join(repo, 'src'))).toEqual({ ...none, repo: expected })
+  expect(await resolvePath(root)).toEqual({ ...none, canInit: true })
+  expect(await resolvePath(plain)).toEqual({ ...none, canInit: true, canClone: true })
+  expect(await resolvePath(join(root, 'missing'))).toEqual(none)
   await writeFile(join(root, 'plain.txt'), '')
-  expect(await resolvePath(join(root, 'plain.txt'))).toEqual({ repo: null, canInit: false })
+  expect(await resolvePath(join(root, 'plain.txt'))).toEqual(none)
+  await writeFile(join(plain, 'notes.txt'), '')
+  expect(await resolvePath(plain)).toEqual({ ...none, canInit: true })
 })
 
 it('initializes an existing folder as a repository and registers it', async () => {
@@ -105,6 +110,48 @@ it('refuses to initialize missing paths and files', async () => {
   await expect(initRepo(file)).rejects.toThrow('Not a directory')
 })
 
+it('clones into an empty folder and registers the result', async () => {
+  await git(repo, [
+    '-c',
+    'user.name=Test',
+    '-c',
+    'user.email=test@example.com',
+    'commit',
+    '--allow-empty',
+    '-m',
+    'initial',
+  ])
+  const target = join(root, 'Clone')
+  await mkdir(target)
+  const cloned = await cloneRepo(target, (directory) => git(directory, ['clone', '--', repo, '.']))
+  expect(cloned).toEqual({ path: resolve(target), name: 'Clone' })
+  expect(listRepos()).toEqual([cloned])
+  expect((await git(target, ['rev-parse', 'HEAD'])).trim()).toBe(
+    (await git(repo, ['rev-parse', 'HEAD'])).trim(),
+  )
+})
+
+it('refuses to clone into missing, non-empty or nested folders before cloning', async () => {
+  const clone = vi.fn(async () => {})
+  const file = join(root, 'plain.txt')
+  await writeFile(file, '')
+  await mkdir(join(repo, 'nested'))
+  await expect(cloneRepo(join(root, 'missing'), clone)).rejects.toThrow('Directory not found')
+  await expect(cloneRepo(file, clone)).rejects.toThrow('Not a directory')
+  await expect(cloneRepo(root, clone)).rejects.toThrow(`${resolve(root)} is not empty`)
+  await expect(cloneRepo(join(repo, 'nested'), clone)).rejects.toThrow(
+    `is inside the repository at ${resolve(repo)}`,
+  )
+  expect(clone).not.toHaveBeenCalled()
+  expect(listRepos()).toEqual([])
+})
+
+it('reports a clone that left no repository behind', async () => {
+  const target = join(root, 'empty')
+  await mkdir(target)
+  await expect(cloneRepo(target, async () => {})).rejects.toThrow('No git repository found')
+  expect(listRepos()).toEqual([])
+})
 it('scans immediate repositories while ignoring files, missing paths and bare repositories', async () => {
   const bare = join(root, 'bare.git')
   await mkdir(bare)

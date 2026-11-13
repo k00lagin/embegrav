@@ -1,7 +1,7 @@
 // @vitest-environment jsdom
 import { act, cleanup, fireEvent, render, screen, waitFor, within } from '@testing-library/react'
 import { afterEach, beforeEach, expect, it, vi } from 'vitest'
-import type { CommitDetails, GitCommit, GraphData } from '@shared/types'
+import type { CommitDetails, GitCommit, GitHubRepoMatch, GraphData } from '@shared/types'
 import { api } from '@/api'
 import { App } from '@/App'
 import { DEFAULT_SETTINGS } from '@/lib/settings'
@@ -686,7 +686,9 @@ it('resets the repository highlight when filtering and ignores navigation with n
 
 it.each(['click', 'Enter'])('adds a pasted repository path with %s', async (method) => {
   const repo = { path: 'C:\\Git\\new repo', name: 'new repo' }
-  const check = vi.spyOn(api, 'resolveRepo').mockResolvedValue({ repo, canInit: false })
+  const check = vi
+    .spyOn(api, 'resolveRepo')
+    .mockResolvedValue({ repo, canInit: false, canClone: false })
   const add = vi.spyOn(api, 'addRepo').mockResolvedValue({
     repos: [{ path: 'R', name: 'Repo R' }, repo],
     added: [repo],
@@ -712,7 +714,9 @@ it.each(['click', 'Enter'])(
   'initializes a pasted folder without a repository with %s',
   async (method) => {
     const folder = { path: 'C:\\Git\\new project', name: 'new project' }
-    const check = vi.spyOn(api, 'resolveRepo').mockResolvedValue({ repo: null, canInit: true })
+    const check = vi
+      .spyOn(api, 'resolveRepo')
+      .mockResolvedValue({ repo: null, canInit: true, canClone: false })
     const init = vi.spyOn(api, 'initRepo').mockResolvedValue({
       repos: [{ path: 'R', name: 'Repo R' }, folder],
       added: [folder],
@@ -736,7 +740,7 @@ it.each(['click', 'Enter'])(
 )
 
 it('keeps the filter open when initialization fails', async () => {
-  vi.spyOn(api, 'resolveRepo').mockResolvedValue({ repo: null, canInit: true })
+  vi.spyOn(api, 'resolveRepo').mockResolvedValue({ repo: null, canInit: true, canClone: false })
   const init = vi.spyOn(api, 'initRepo').mockRejectedValue(new Error('git is missing'))
   render(<App />)
   fireEvent.click(await screen.findByRole('button', { name: 'Repo R' }))
@@ -750,10 +754,153 @@ it('keeps the filter open when initialization fails', async () => {
   expect(button).toHaveProperty('disabled', false)
 })
 
+it.each(['click', 'Enter'])(
+  'clones a matching GitHub repository into a pasted empty folder with %s',
+  async (method) => {
+    const folder = { path: 'C:\\Git\\demo', name: 'demo' }
+    vi.spyOn(api, 'resolveRepo').mockResolvedValue({ repo: null, canInit: true, canClone: true })
+    const lookup = vi
+      .spyOn(api, 'githubRepos')
+      .mockResolvedValue({ repos: [{ fullName: 'me/demo', via: 'gh' }] })
+    const clone = vi.spyOn(api, 'cloneRepo').mockResolvedValue({
+      repos: [{ path: 'R', name: 'Repo R' }, folder],
+      added: [folder],
+    })
+    const init = vi.spyOn(api, 'initRepo')
+    render(<App />)
+    fireEvent.click(await screen.findByRole('button', { name: 'Repo R' }))
+    const search = screen.getByRole('textbox', { name: 'Search repositories' })
+    fireEvent.change(search, { target: { value: folder.path } })
+    const button = await screen.findByRole('button', { name: /Clone me\/demo/ })
+    expect(lookup).toHaveBeenCalledWith('demo')
+    expect(document.querySelector('.dropdown-item.active')).toBe(
+      screen.getByRole('button', { name: /Initialize demo/ }),
+    )
+    if (method === 'click') fireEvent.click(button)
+    else {
+      fireEvent.keyDown(search, { key: 'ArrowDown' })
+      expect(document.querySelector('.dropdown-item.active')).toBe(button)
+      fireEvent.keyDown(search, { key: 'Enter' })
+    }
+    await waitFor(() => expect(clone).toHaveBeenCalledWith(folder.path, 'me/demo', 'gh'))
+    await waitFor(() =>
+      expect(api.graph).toHaveBeenCalledWith(expect.objectContaining({ repo: folder.path })),
+    )
+    expect(init).not.toHaveBeenCalled()
+    expect(screen.queryByRole('textbox', { name: 'Search repositories' })).toBeNull()
+  },
+)
+
+it('moves between initialization and GitHub matches with the arrow keys', async () => {
+  vi.spyOn(api, 'resolveRepo').mockResolvedValue({ repo: null, canInit: true, canClone: true })
+  vi.spyOn(api, 'githubRepos').mockResolvedValue({
+    repos: [
+      { fullName: 'me/demo', via: 'gcm' },
+      { fullName: 'acme/demo', via: 'gcm' },
+    ],
+  })
+  const result = { repos: [{ path: 'R', name: 'Repo R' }], added: [] }
+  const clone = vi.spyOn(api, 'cloneRepo').mockResolvedValue(result)
+  const init = vi.spyOn(api, 'initRepo').mockResolvedValue(result)
+  render(<App />)
+  fireEvent.click(await screen.findByRole('button', { name: 'Repo R' }))
+  const search = screen.getByRole('textbox', { name: 'Search repositories' })
+  fireEvent.change(search, { target: { value: '/work/demo' } })
+  await screen.findByRole('button', { name: /Clone acme\/demo/ })
+  const active = () => document.querySelector('.dropdown-item.active')?.textContent
+  expect(active()).toBe('Initialize demo/work/demo')
+  fireEvent.keyDown(search, { key: 'ArrowDown' })
+  expect(active()).toBe('Clone me/demo/work/demo')
+  fireEvent.keyDown(search, { key: 'ArrowDown' })
+  expect(active()).toBe('Clone acme/demo/work/demo')
+  fireEvent.keyDown(search, { key: 'ArrowDown' })
+  expect(active()).toBe('Initialize demo/work/demo')
+  fireEvent.keyDown(search, { key: 'ArrowUp' })
+  fireEvent.keyDown(search, { key: 'Enter' })
+  await waitFor(() => expect(clone).toHaveBeenCalledWith('/work/demo', 'acme/demo', 'gcm'))
+  expect(init).not.toHaveBeenCalled()
+})
+
+it('initializes a folder while its GitHub lookup is still pending', async () => {
+  vi.spyOn(api, 'resolveRepo').mockResolvedValue({ repo: null, canInit: true, canClone: true })
+  const lookup = vi.spyOn(api, 'githubRepos').mockImplementation(() => new Promise(() => {}))
+  const init = vi
+    .spyOn(api, 'initRepo')
+    .mockResolvedValue({ repos: [{ path: 'R', name: 'Repo R' }], added: [] })
+  render(<App />)
+  fireEvent.click(await screen.findByRole('button', { name: 'Repo R' }))
+  const search = screen.getByRole('textbox', { name: 'Search repositories' })
+  fireEvent.change(search, { target: { value: '/work/demo' } })
+  const button = await screen.findByRole('button', { name: /Initialize demo/ })
+  await waitFor(() => expect(lookup).toHaveBeenCalledWith('demo'))
+  expect(screen.getByText('Looking for demo on GitHub…')).toBeTruthy()
+  expect(document.querySelector('.dropdown-item.active')).toBe(button)
+  fireEvent.keyDown(search, { key: 'Enter' })
+  await waitFor(() => expect(init).toHaveBeenCalledWith('/work/demo'))
+  expect(screen.queryByRole('textbox', { name: 'Search repositories' })).toBeNull()
+})
+
+it('lists GitHub matches below Initialize without moving the highlight', async () => {
+  vi.spyOn(api, 'resolveRepo').mockResolvedValue({ repo: null, canInit: true, canClone: true })
+  let finish!: (value: { repos: GitHubRepoMatch[] }) => void
+  const lookup = vi.spyOn(api, 'githubRepos').mockImplementation(
+    () =>
+      new Promise((resolve) => {
+        finish = resolve
+      }),
+  )
+  render(<App />)
+  fireEvent.click(await screen.findByRole('button', { name: 'Repo R' }))
+  const search = screen.getByRole('textbox', { name: 'Search repositories' })
+  fireEvent.change(search, { target: { value: '/work/demo' } })
+  const initialize = await screen.findByRole('button', { name: /Initialize demo/ })
+  await waitFor(() => expect(lookup).toHaveBeenCalledWith('demo'))
+  await act(async () => finish({ repos: [{ fullName: 'me/demo', via: 'gh' }] }))
+  const clone = screen.getByRole('button', { name: /Clone me\/demo/ })
+  expect(screen.queryByText('Looking for demo on GitHub…')).toBeNull()
+  expect(document.querySelector('.dropdown-item.active')).toBe(initialize)
+  expect(initialize.compareDocumentPosition(clone) & Node.DOCUMENT_POSITION_FOLLOWING).toBeTruthy()
+})
+
+it('does not look up folders that cannot receive a clone or have no valid GitHub name', async () => {
+  const check = vi
+    .spyOn(api, 'resolveRepo')
+    .mockResolvedValueOnce({ repo: null, canInit: true, canClone: false })
+    .mockResolvedValueOnce({ repo: null, canInit: true, canClone: true })
+  const lookup = vi.spyOn(api, 'githubRepos')
+  render(<App />)
+  fireEvent.click(await screen.findByRole('button', { name: 'Repo R' }))
+  const search = screen.getByRole('textbox', { name: 'Search repositories' })
+  fireEvent.change(search, { target: { value: '/work/full' } })
+  await screen.findByRole('button', { name: /Initialize full/ })
+  fireEvent.change(search, { target: { value: '/work/new project' } })
+  await screen.findByRole('button', { name: /Initialize new project/ })
+  expect(check).toHaveBeenCalledTimes(2)
+  expect(lookup).not.toHaveBeenCalled()
+})
+
+it('keeps the filter open when cloning fails', async () => {
+  vi.spyOn(api, 'resolveRepo').mockResolvedValue({ repo: null, canInit: true, canClone: true })
+  vi.spyOn(api, 'githubRepos').mockResolvedValue({ repos: [{ fullName: 'me/demo', via: 'gh' }] })
+  const clone = vi.spyOn(api, 'cloneRepo').mockRejectedValue(new Error('Authentication failed'))
+  render(<App />)
+  fireEvent.click(await screen.findByRole('button', { name: 'Repo R' }))
+  const search = screen.getByRole('textbox', { name: 'Search repositories' })
+  fireEvent.change(search, { target: { value: '/work/demo' } })
+  const button = await screen.findByRole('button', { name: /Clone me\/demo/ })
+  fireEvent.click(button)
+  expect(button).toHaveProperty('disabled', true)
+  expect(await screen.findByText('Authentication failed')).toBeTruthy()
+  expect(screen.getByText('Could not clone me/demo')).toBeTruthy()
+  expect(clone).toHaveBeenCalledTimes(1)
+  expect(screen.getByRole('textbox', { name: 'Search repositories' })).toBe(search)
+  expect(button).toHaveProperty('disabled', false)
+})
 it('opens an already registered repository when a pasted path resolves to it', async () => {
   vi.spyOn(api, 'resolveRepo').mockResolvedValue({
     repo: { path: 'R', name: 'Repo R' },
     canInit: false,
+    canClone: false,
   })
   const add = vi.spyOn(api, 'addRepo')
   render(<App />)
@@ -776,7 +923,7 @@ it('ignores stale path checks and does not probe ordinary search text', async ()
           finish = resolve
         }),
     )
-    .mockResolvedValue({ repo: null, canInit: false })
+    .mockResolvedValue({ repo: null, canInit: false, canClone: false })
   render(<App />)
   fireEvent.click(await screen.findByRole('button', { name: 'Repo R' }))
   const search = screen.getByRole('textbox', { name: 'Search repositories' })
@@ -796,7 +943,9 @@ it('ignores stale path checks and does not probe ordinary search text', async ()
     await vi.advanceTimersByTimeAsync(150)
   })
   expect(check.mock.calls).toEqual([['/old'], ['/missing']])
-  await act(async () => finish({ repo: { path: '/old', name: 'old' }, canInit: false }))
+  await act(async () =>
+    finish({ repo: { path: '/old', name: 'old' }, canInit: false, canClone: false }),
+  )
   expect(screen.getByText('No Git repository at this path')).toBeTruthy()
   expect(screen.queryByRole('button', { name: /Add old/ })).toBeNull()
 })
@@ -805,6 +954,7 @@ it('keeps the filter open on add failure and prevents duplicate submissions', as
   vi.spyOn(api, 'resolveRepo').mockResolvedValue({
     repo: { path: '/new', name: 'new' },
     canInit: false,
+    canClone: false,
   })
   let reject!: (error: Error) => void
   const add = vi.spyOn(api, 'addRepo').mockImplementation(

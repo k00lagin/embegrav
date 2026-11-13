@@ -26,15 +26,32 @@ async function addRepoPath(p: string): Promise<RepoInfo | null> {
   return repo
 }
 
-/** Resolve a typed path: an enclosing repository, or whether the folder could be initialized as one. */
+const isEmptyDirectory = (abs: string) => readdir(abs).then((entries) => entries.length === 0)
+
+/**
+ * Resolve a typed path: an enclosing repository, or whether the folder could be
+ * initialized as one or receive a clone.
+ */
 export async function resolvePath(p: string): Promise<ResolvedPath> {
   const repo = await findRepo(p)
-  if (repo) return { repo, canInit: false }
+  if (repo) return { repo, canInit: false, canClone: false }
+  const abs = normalize(p)
   try {
-    return { repo: null, canInit: (await stat(normalize(p))).isDirectory() }
+    if (!(await stat(abs)).isDirectory()) return { repo: null, canInit: false, canClone: false }
+    return { repo: null, canInit: true, canClone: await isEmptyDirectory(abs).catch(() => false) }
   } catch {
-    return { repo: null, canInit: false }
+    return { repo: null, canInit: false, canClone: false }
   }
+}
+
+async function assertDirectory(abs: string): Promise<void> {
+  let isDirectory: boolean
+  try {
+    isDirectory = (await stat(abs)).isDirectory()
+  } catch {
+    throw new Error(`Directory not found: ${abs}`)
+  }
+  if (!isDirectory) throw new Error(`Not a directory: ${abs}`)
 }
 
 /**
@@ -44,13 +61,7 @@ export async function resolvePath(p: string): Promise<ResolvedPath> {
  */
 export async function initRepo(p: string): Promise<RepoInfo> {
   const abs = normalize(p)
-  let isDirectory: boolean
-  try {
-    isDirectory = (await stat(abs)).isDirectory()
-  } catch {
-    throw new Error(`Directory not found: ${abs}`)
-  }
-  if (!isDirectory) throw new Error(`Not a directory: ${abs}`)
+  await assertDirectory(abs)
   const existing = await findRepo(abs)
   if (existing) {
     const samePath =
@@ -64,6 +75,25 @@ export async function initRepo(p: string): Promise<RepoInfo> {
   await git(abs, ['init'])
   const repo: RepoInfo = { path: abs, name: basename(abs) || abs }
   repos.set(abs, repo)
+  return repo
+}
+
+/**
+ * Clone into an existing empty folder with `clone` and register the result.
+ * Like initRepo, a folder inside another repository is refused.
+ */
+export async function cloneRepo(
+  p: string,
+  clone: (directory: string) => Promise<unknown>,
+): Promise<RepoInfo> {
+  const abs = normalize(p)
+  await assertDirectory(abs)
+  if (!(await isEmptyDirectory(abs))) throw new Error(`${abs} is not empty`)
+  const existing = await findRepo(abs)
+  if (existing) throw new Error(`${abs} is inside the repository at ${existing.path}`)
+  await clone(abs)
+  const repo = await addRepoPath(abs)
+  if (!repo) throw new Error(`No git repository found at ${abs} after cloning`)
   return repo
 }
 

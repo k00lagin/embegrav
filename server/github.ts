@@ -2,14 +2,19 @@ import { execFile } from 'node:child_process'
 import { homedir } from 'node:os'
 import type { ActionArgs } from '../shared/actions.ts'
 import { GITHUB_OWNER_RE, GITHUB_REPO_NAME_RE, type GitHubVia } from '../shared/github.ts'
-import type { GitHubAccount } from '../shared/types.ts'
+import type { GitHubAccount, GitHubRepoMatch } from '../shared/types.ts'
 import { assertSafeArg, git, gitOrNull, gitOutput, gitRaw } from './git.ts'
 
 /** Runs the GitHub CLI and resolves with stdout; rejects with a readable message. */
 export type GhRunner = (args: string[]) => Promise<string>
 
-/** Reads the stored GitHub credential (Git Credential Manager signs in when there is none). */
-export type CredentialReader = () => Promise<{ username?: string; password: string }>
+/**
+ * Reads the stored GitHub credential. When interactive, Git Credential Manager
+ * signs in if there is none.
+ */
+export type CredentialReader = (
+  interactive: boolean,
+) => Promise<{ username?: string; password: string }>
 
 /** Everything that talks to the outside world, injectable for tests. */
 export interface GitHubDeps {
@@ -43,11 +48,15 @@ export const runGh: GhRunner = (args) =>
 /**
  * `git credential fill` for https://github.com. With Git Credential Manager
  * this returns its OAuth token, or opens GCM's sign-in window when none is
- * stored. Read-only: the credential is neither approved nor rejected.
+ * stored and `interactive` is set. Read-only: the credential is neither
+ * approved nor rejected.
  */
-export const readGitHubCredential: CredentialReader = async () => {
+export const readGitHubCredential: CredentialReader = async (interactive) => {
   const out = await git(homedir(), ['credential', 'fill'], {
     input: 'protocol=https\nhost=github.com\n\n',
+    // An empty GIT_ASKPASS also suppresses core.askPass and SSH_ASKPASS, so an
+    // editor's askpass helper cannot prompt for a username either.
+    env: interactive ? undefined : { GCM_INTERACTIVE: 'never', GIT_ASKPASS: '' },
   })
   const fields = new Map(
     out.split(/\r?\n/).flatMap((line) => {
@@ -73,29 +82,37 @@ interface NewRepo {
   description?: string
 }
 
+/** The fields of GitHub's repository object used here. */
+interface RepoData {
+  full_name?: string
+  html_url?: string
+  clone_url?: string
+  ssh_url?: string
+}
+
+type RepoUrls = Required<Pick<RepoData, 'html_url' | 'clone_url' | 'ssh_url'>>
+
 /** One way of authenticating against GitHub's API. */
 interface Strategy {
   via: GitHubVia
   login: () => Promise<string>
   /** Organizations the user belongs to (best effort) */
   orgs: () => Promise<string[]>
-  /** Create the repository; returns its web page and the URL to add as a remote */
-  create: (repo: NewRepo, login: string) => Promise<{ htmlUrl: string; remoteUrl: string }>
-}
-
-interface CreatedRepo {
-  html_url?: string
-  clone_url?: string
-  ssh_url?: string
+  /** Look up a repository; rejects when it does not exist or is not visible */
+  repo: (owner: string, name: string) => Promise<RepoData>
+  /** Create the repository */
+  create: (repo: NewRepo, login: string) => Promise<RepoUrls>
+  /** The URL git uses for a repository */
+  remoteUrl: (repo: RepoUrls) => Promise<string>
 }
 
 const endpointFor = (repo: NewRepo, login: string) =>
   !repo.owner || repo.owner === login ? 'user/repos' : `orgs/${repo.owner}/repos`
 
-function checkCreated(created: CreatedRepo): Required<CreatedRepo> {
-  if (!created.html_url || !created.clone_url || !created.ssh_url)
+function checkUrls(repo: RepoData): RepoUrls {
+  if (!repo.html_url || !repo.clone_url || !repo.ssh_url)
     throw new Error('GitHub returned no repository URL')
-  return created as Required<CreatedRepo>
+  return repo as RepoUrls
 }
 
 /** GitHub CLI: uses gh's sign-in and its configured git protocol (https or ssh). */
@@ -108,28 +125,32 @@ function ghStrategy(gh: GhRunner): Strategy {
         .split(/\r?\n/)
         .map((o) => o.trim())
         .filter(Boolean),
+    repo: async (owner, name) => JSON.parse(await gh(['api', `repos/${owner}/${name}`])),
     async create(repo, login) {
       const fields = ['-f', `name=${repo.name}`, '-F', `private=${repo.visibility === 'private'}`]
       if (repo.description) fields.push('-f', `description=${repo.description}`)
-      const created = checkCreated(
+      return checkUrls(
         JSON.parse(await gh(['api', '-X', 'POST', endpointFor(repo, login), ...fields])),
       )
+    },
+    async remoteUrl(repo) {
       const protocol = (
         await gh(['config', 'get', 'git_protocol', '-h', 'github.com']).catch(() => '')
       ).trim()
-      return {
-        htmlUrl: created.html_url,
-        remoteUrl: protocol === 'ssh' ? created.ssh_url : created.clone_url,
-      }
+      return protocol === 'ssh' ? repo.ssh_url : repo.clone_url
     },
   }
 }
 
 /** Git Credential Manager: calls the REST API with GCM's token; remotes use https. */
-function gcmStrategy(readCredential: CredentialReader, fetchImpl: typeof fetch): Strategy {
+function gcmStrategy(
+  readCredential: CredentialReader,
+  fetchImpl: typeof fetch,
+  interactive: boolean,
+): Strategy {
   let credential: ReturnType<CredentialReader> | undefined
   const request = async <T>(path: string, body?: unknown): Promise<T> => {
-    credential ??= readCredential()
+    credential ??= readCredential(interactive)
     const { username, password } = await credential
     const authorization = username
       ? `Basic ${Buffer.from(`${username}:${password}`).toString('base64')}`
@@ -167,16 +188,16 @@ function gcmStrategy(readCredential: CredentialReader, fetchImpl: typeof fetch):
       request<{ login: string }[]>('user/orgs?per_page=100').then((orgs) =>
         orgs.map((o) => o.login),
       ),
-    async create(repo, login) {
-      const created = checkCreated(
-        await request<CreatedRepo>(endpointFor(repo, login), {
+    repo: (owner, name) => request<RepoData>(`repos/${owner}/${name}`),
+    create: async (repo, login) =>
+      checkUrls(
+        await request<RepoData>(endpointFor(repo, login), {
           name: repo.name,
           private: repo.visibility === 'private',
           ...(repo.description ? { description: repo.description } : {}),
         }),
-      )
-      return { htmlUrl: created.html_url, remoteUrl: created.clone_url }
-    },
+      ),
+    remoteUrl: async (repo) => repo.clone_url,
   }
 }
 
@@ -187,13 +208,15 @@ const STRATEGY_LABELS: Record<GitHubVia, string> = {
 
 /**
  * Sign in with the requested strategy, or try the GitHub CLI first and fall
- * back to Git Credential Manager.
+ * back to Git Credential Manager. Unless `interactive`, only an existing
+ * sign-in is used.
  */
 async function connect(
   deps: GitHubDeps,
   via?: GitHubVia,
+  interactive = true,
 ): Promise<{ strategy: Strategy; login: string }> {
-  const all = [ghStrategy(deps.gh), gcmStrategy(deps.credential, deps.fetch)]
+  const all = [ghStrategy(deps.gh), gcmStrategy(deps.credential, deps.fetch, interactive)]
   const candidates = via ? all.filter((s) => s.via === via) : all
   const failures: string[] = []
   for (const strategy of candidates) {
@@ -244,13 +267,61 @@ export async function publishToGitHub(
   const { strategy, login } = await connect(deps, a.via)
   const created = await strategy.create(a, login)
   const out = [
-    `Created ${a.visibility} repository ${created.htmlUrl} (via ${STRATEGY_LABELS[strategy.via]})`,
+    `Created ${a.visibility} repository ${created.html_url} (via ${STRATEGY_LABELS[strategy.via]})`,
   ]
   try {
-    out.push(await gitOutput(repo, ['remote', 'add', remote, created.remoteUrl]))
+    out.push(await gitOutput(repo, ['remote', 'add', remote, await strategy.remoteUrl(created)]))
     if (branch) out.push(await gitOutput(repo, ['push', '-u', remote, branch]))
   } catch (e) {
-    throw new Error(`Created ${created.htmlUrl}, but: ${(e as Error).message}`, { cause: e })
+    throw new Error(`Created ${created.html_url}, but: ${(e as Error).message}`, { cause: e })
   }
   return out.filter(Boolean).join('\n')
+}
+
+/**
+ * Repositories named `name` (case-insensitively) under the signed-in user or
+ * one of their organizations. Never opens a sign-in window: without an existing
+ * sign-in, or when GitHub cannot be reached, nothing matches.
+ */
+export async function findGitHubRepos(
+  name: string,
+  deps: GitHubDeps = defaultDeps,
+): Promise<GitHubRepoMatch[]> {
+  if (!GITHUB_REPO_NAME_RE.test(name)) return []
+  let connection: Awaited<ReturnType<typeof connect>>
+  try {
+    connection = await connect(deps, undefined, false)
+  } catch {
+    return []
+  }
+  const { strategy, login } = connection
+  const lookup = async (owner: string): Promise<GitHubRepoMatch | null> => {
+    const found = await strategy.repo(owner, name).catch(() => null)
+    const fullName = found?.full_name
+    // Renamed and transferred repositories redirect to their new name; only the folder's name counts.
+    if (!fullName || fullName.toLowerCase() !== `${owner}/${name}`.toLowerCase()) return null
+    return { fullName, via: strategy.via }
+  }
+  const [own, orgs] = await Promise.all([lookup(login), strategy.orgs().catch(() => [])])
+  const inOrgs = await Promise.all(
+    orgs.filter((o) => o.toLowerCase() !== login.toLowerCase()).map(lookup),
+  )
+  return [own, ...inOrgs].filter((m): m is GitHubRepoMatch => m !== null)
+}
+
+/**
+ * Clone `owner/name` into an empty directory, signing in with the requested
+ * strategy. The clone URL follows the strategy the same way publishing does.
+ */
+export async function cloneFromGitHub(
+  directory: string,
+  a: { repo: string; via?: GitHubVia },
+  deps: GitHubDeps = defaultDeps,
+): Promise<string> {
+  const [owner, name, ...rest] = a.repo.split('/')
+  if (rest.length > 0 || !GITHUB_OWNER_RE.test(owner) || !GITHUB_REPO_NAME_RE.test(name ?? ''))
+    throw new Error(`"${a.repo}" is not a valid GitHub repository`)
+  const { strategy } = await connect(deps, a.via)
+  const url = await strategy.remoteUrl(checkUrls(await strategy.repo(owner, name)))
+  return gitOutput(directory, ['clone', '--', url, '.'])
 }

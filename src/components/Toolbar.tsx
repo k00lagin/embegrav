@@ -1,5 +1,6 @@
 import { useEffect, useRef, useState, type ReactNode } from 'react'
-import type { GraphData, RepoInfo } from '@shared/types'
+import { GITHUB_REPO_NAME_RE } from '@shared/github'
+import type { GitHubRepoMatch, GraphData, RepoInfo } from '@shared/types'
 import type { Settings } from '@/lib/settings'
 import { api } from '@/api'
 import { useToast } from './Toast'
@@ -46,6 +47,8 @@ interface Props {
   onSubmitRepo: (path: string) => Promise<void>
   /** Initialize a git repository in a folder that has none and open it */
   onInitRepo: (path: string) => Promise<void>
+  /** Clone a GitHub repository into an empty folder and open it */
+  onCloneRepo: (path: string, repo: GitHubRepoMatch) => Promise<void>
   onRepoContextMenu: (path: string, x: number, y: number) => void
   repoContextMenuOpen?: boolean
   data: GraphData | null
@@ -110,6 +113,7 @@ export function Toolbar(p: Props) {
             onAddRepo={p.onAddRepo}
             onSubmitRepo={p.onSubmitRepo}
             onInitRepo={p.onInitRepo}
+            onCloneRepo={p.onCloneRepo}
             onRepoContextMenu={p.onRepoContextMenu}
             close={close}
           />
@@ -356,6 +360,14 @@ export function Toolbar(p: Props) {
   )
 }
 
+/** A row of the repository filter: a repository, or an action for a pasted folder path. */
+type FilterOption =
+  | { key: string; kind: 'repo'; repo: RepoInfo }
+  | { key: string; kind: 'clone'; match: GitHubRepoMatch }
+  | { key: string; kind: 'init' }
+
+const repoKey = (path: string) => `repo:${path}`
+
 function RepositoryFilter(
   p: Pick<
     Props,
@@ -365,39 +377,43 @@ function RepositoryFilter(
     | 'onAddRepo'
     | 'onSubmitRepo'
     | 'onInitRepo'
+    | 'onCloneRepo'
     | 'onRepoContextMenu'
   > & {
     close: () => void
   },
 ) {
   const [query, setQuery] = useState('')
-  const [highlightedPath, setHighlightedPath] = useState(p.repo)
+  const [highlightedKey, setHighlightedKey] = useState(p.repo === null ? null : repoKey(p.repo))
   const [checked, setChecked] = useState<{
     path: string
     repo: RepoInfo | null
     canInit: boolean
+    canClone: boolean
     error?: string
   } | null>(null)
-  const [submitting, setSubmitting] = useState(false)
+  const [github, setGitHub] = useState<{ path: string; matches: GitHubRepoMatch[] } | null>(null)
+  /** Key of the option being added, initialized or cloned */
+  const [submitting, setSubmitting] = useState<string | null>(null)
+  const busy = submitting !== null
   const toast = useToast()
   const input = useRef<HTMLInputElement>(null)
   const highlightedRow = useRef<HTMLDivElement>(null)
   const path = query.trim().replace(/^(["'])(.*)\1$/, '$2')
   const isPath = /^(?:[a-zA-Z]:[\\/]|[\\/]|\.{1,2}[\\/])/.test(path)
   const checking = isPath && checked?.path !== path
-  const resolvedRepo = isPath && checked?.path === path ? checked.repo : null
-  const initTarget =
-    isPath && checked?.path === path && !checked.repo && checked.canInit
-      ? {
-          path,
-          name:
-            path
-              .replace(/[\\/]+$/, '')
-              .split(/[\\/]/)
-              .filter(Boolean)
-              .pop() ?? path,
-        }
-      : null
+  const current = isPath && checked?.path === path ? checked : null
+  const resolvedRepo = current?.repo ?? null
+  const folderName =
+    path
+      .replace(/[\\/]+$/, '')
+      .split(/[\\/]/)
+      .filter(Boolean)
+      .pop() ?? path
+  const githubName = current?.canClone && GITHUB_REPO_NAME_RE.test(folderName) ? folderName : null
+  const checkingGitHub = githubName !== null && github?.path !== path
+  const cloneMatches = githubName !== null && github?.path === path ? github.matches : []
+  const offerInit = !!current && !current.repo && current.canInit
   const newRepo = resolvedRepo && !p.repos.some((r) => r.path === resolvedRepo.path)
   const needle = path.toLowerCase()
   const filteredRepos = p.repos.filter(
@@ -405,16 +421,31 @@ function RepositoryFilter(
   )
   if (resolvedRepo && !filteredRepos.some((r) => r.path === resolvedRepo.path))
     filteredRepos.push(resolvedRepo)
+  const options: FilterOption[] = [
+    ...filteredRepos.map((repo) => ({ key: repoKey(repo.path), kind: 'repo' as const, repo })),
+    ...(offerInit ? [{ key: 'init', kind: 'init' as const }] : []),
+    // Matches arrive after Initialize is usable; listing them below it keeps
+    // the rows and the default highlight from moving under the user.
+    ...cloneMatches.map((match) => ({
+      key: `clone:${match.fullName}`,
+      kind: 'clone' as const,
+      match,
+    })),
+  ]
   const highlighted =
-    filteredRepos.find((r) => r.path === highlightedPath) ?? resolvedRepo ?? filteredRepos[0]
+    options.find((o) => o.key === highlightedKey) ??
+    (resolvedRepo ? options.find((o) => o.key === repoKey(resolvedRepo.path)) : undefined) ??
+    options[0]
 
   useEffect(() => {
     if (!isPath) return
     let stale = false
     const timer = setTimeout(() => {
       api.resolveRepo(path).then(
-        ({ repo, canInit }) => !stale && setChecked({ path, repo, canInit }),
-        (e: Error) => !stale && setChecked({ path, repo: null, canInit: false, error: e.message }),
+        ({ repo, canInit, canClone }) => !stale && setChecked({ path, repo, canInit, canClone }),
+        (e: Error) =>
+          !stale &&
+          setChecked({ path, repo: null, canInit: false, canClone: false, error: e.message }),
       )
     }, 150)
     return () => {
@@ -423,34 +454,46 @@ function RepositoryFilter(
     }
   }, [path, isPath])
 
-  const select = async (r: RepoInfo) => {
-    if (submitting) return
-    if (!newRepo || r.path !== resolvedRepo?.path) {
-      p.close()
-      p.onSelectRepo(r.path)
-      return
+  useEffect(() => {
+    if (githubName === null) return
+    let stale = false
+    api.githubRepos(githubName).then(
+      ({ repos }) => !stale && setGitHub({ path, matches: repos }),
+      () => !stale && setGitHub({ path, matches: [] }),
+    )
+    return () => {
+      stale = true
     }
-    setSubmitting(true)
+  }, [path, githubName])
+
+  const run = async (key: string, action: () => Promise<void>, failure: string) => {
+    if (busy) return
+    setSubmitting(key)
     try {
-      await p.onSubmitRepo(r.path)
+      await action()
       p.close()
     } catch (e) {
-      toast.show('error', 'Could not add repository', (e as Error).message)
+      toast.show('error', failure, (e as Error).message)
     } finally {
-      setSubmitting(false)
+      setSubmitting(null)
     }
   }
 
-  const initialize = async () => {
-    if (!initTarget || submitting) return
-    setSubmitting(true)
-    try {
-      await p.onInitRepo(initTarget.path)
+  const choose = (option: FilterOption) => {
+    if (busy) return
+    if (option.kind === 'init') {
+      void run(option.key, () => p.onInitRepo(path), 'Could not initialize repository')
+    } else if (option.kind === 'clone') {
+      void run(
+        option.key,
+        () => p.onCloneRepo(path, option.match),
+        `Could not clone ${option.match.fullName}`,
+      )
+    } else if (newRepo && option.repo.path === resolvedRepo?.path) {
+      void run(option.key, () => p.onSubmitRepo(option.repo.path), 'Could not add repository')
+    } else {
       p.close()
-    } catch (e) {
-      toast.show('error', 'Could not initialize repository', (e as Error).message)
-    } finally {
-      setSubmitting(false)
+      p.onSelectRepo(option.repo.path)
     }
   }
 
@@ -469,7 +512,7 @@ function RepositoryFilter(
     if (bounds.top < top) panel.scrollTop -= top - bounds.top
     else if (bounds.bottom > bottom) panel.scrollTop += bounds.bottom - bottom
     // oxlint-disable-next-line react/exhaustive-effect-dependencies -- selection and filtering move the highlighted row
-  }, [highlighted?.path, query])
+  }, [highlighted?.key, query])
 
   return (
     <div className="pb-1 min-w-0 w-full">
@@ -481,90 +524,100 @@ function RepositoryFilter(
           placeholder="Search repositories or paste a path"
           aria-label="Search repositories"
           value={query}
-          disabled={submitting}
+          disabled={busy}
           onChange={(e) => {
             setQuery(e.target.value)
-            setHighlightedPath(null)
+            setHighlightedKey(null)
           }}
           onKeyDown={(e) => {
             if (e.key === 'ArrowDown' || e.key === 'ArrowUp') {
               e.preventDefault()
               e.stopPropagation()
-              if (!filteredRepos.length) return
-              const index = filteredRepos.findIndex((r) => r.path === highlighted?.path)
+              if (!options.length) return
+              const index = options.findIndex((o) => o.key === highlighted?.key)
               const step = e.key === 'ArrowDown' ? 1 : -1
-              const next = (index + step + filteredRepos.length) % filteredRepos.length
-              setHighlightedPath(filteredRepos[next].path)
+              const next = (index + step + options.length) % options.length
+              setHighlightedKey(options[next].key)
               return
             }
             if (e.key !== 'Enter') return
             e.preventDefault()
             e.stopPropagation()
-            if (highlighted) void select(highlighted)
-            else if (initTarget) void initialize()
+            if (highlighted) choose(highlighted)
           }}
         />
       </div>
-      {filteredRepos.map((r) => (
-        <div
-          key={r.path}
-          ref={r.path === highlighted?.path ? highlightedRow : undefined}
-          onContextMenu={(e) => {
-            e.preventDefault()
-            e.stopPropagation()
-            if (newRepo && r.path === resolvedRepo?.path) return
-            p.onRepoContextMenu(r.path, e.clientX, e.clientY)
-          }}
-          onKeyDown={(e) => {
-            if (e.key !== 'ContextMenu' && !(e.shiftKey && e.key === 'F10')) return
-            e.preventDefault()
-            e.stopPropagation()
-            if (newRepo && r.path === resolvedRepo?.path) return
-            const rect = e.currentTarget.getBoundingClientRect()
-            p.onRepoContextMenu(r.path, rect.left, rect.bottom)
-          }}
-        >
-          <DropdownItem
-            className="min-w-0"
-            active={r.path === highlighted?.path}
-            disabled={submitting}
-            onClick={() => void select(r)}
+      {options.map((option) => {
+        const active = option.key === highlighted?.key
+        const ref = active ? highlightedRow : undefined
+        const spinner = <IconLoader className="w-4 h-4 shrink-0 animate-spin" />
+        if (option.kind !== 'repo') {
+          return (
+            <div key={option.key} ref={ref}>
+              <DropdownItem active={active} disabled={busy} onClick={() => choose(option)}>
+                {submitting === option.key ? (
+                  spinner
+                ) : option.kind === 'clone' ? (
+                  <IconGithub className="w-4 h-4 shrink-0" />
+                ) : (
+                  <IconFolderPlus className="w-4 h-4 shrink-0" />
+                )}
+                <span className="flex flex-col min-w-0" title={path}>
+                  <span className="truncate">
+                    {option.kind === 'clone'
+                      ? `Clone ${option.match.fullName}`
+                      : `Initialize ${folderName}`}
+                  </span>
+                  <span className="text-xs opacity-60 truncate mono">{path}</span>
+                </span>
+              </DropdownItem>
+            </div>
+          )
+        }
+        const r = option.repo
+        const adding = newRepo && r.path === resolvedRepo?.path
+        return (
+          <div
+            key={option.key}
+            ref={ref}
+            onContextMenu={(e) => {
+              e.preventDefault()
+              e.stopPropagation()
+              if (adding) return
+              p.onRepoContextMenu(r.path, e.clientX, e.clientY)
+            }}
+            onKeyDown={(e) => {
+              if (e.key !== 'ContextMenu' && !(e.shiftKey && e.key === 'F10')) return
+              e.preventDefault()
+              e.stopPropagation()
+              if (adding) return
+              const rect = e.currentTarget.getBoundingClientRect()
+              p.onRepoContextMenu(r.path, rect.left, rect.bottom)
+            }}
           >
-            {newRepo &&
-              r.path === resolvedRepo?.path &&
-              (submitting ? (
-                <IconLoader className="w-4 h-4 shrink-0 animate-spin" />
-              ) : (
-                <IconPlus className="w-4 h-4 shrink-0" />
-              ))}
-            <span className="flex flex-col min-w-0" title={r.path}>
-              <span className="truncate">
-                {newRepo && r.path === resolvedRepo?.path ? `Add ${r.name}` : r.name}
+            <DropdownItem
+              className="min-w-0"
+              active={active}
+              disabled={busy}
+              onClick={() => choose(option)}
+            >
+              {adding &&
+                (submitting === option.key ? spinner : <IconPlus className="w-4 h-4 shrink-0" />)}
+              <span className="flex flex-col min-w-0" title={r.path}>
+                <span className="truncate">{adding ? `Add ${r.name}` : r.name}</span>
+                <span className="text-xs opacity-60 truncate mono">{r.path}</span>
               </span>
-              <span className="text-xs opacity-60 truncate mono">{r.path}</span>
-            </span>
-          </DropdownItem>
-        </div>
-      ))}
-      {initTarget && (
-        <DropdownItem active={!highlighted} disabled={submitting} onClick={() => void initialize()}>
-          {submitting ? (
-            <IconLoader className="w-4 h-4 shrink-0 animate-spin" />
-          ) : (
-            <IconFolderPlus className="w-4 h-4 shrink-0" />
-          )}
-          <span className="flex flex-col min-w-0" title={initTarget.path}>
-            <span className="truncate">Initialize {initTarget.name}</span>
-            <span className="text-xs opacity-60 truncate mono">{initTarget.path}</span>
-          </span>
-        </DropdownItem>
-      )}
-      {checking && (
+            </DropdownItem>
+          </div>
+        )
+      })}
+      {(checking || checkingGitHub) && (
         <div role="status" className="px-3 py-1 text-fg-dim flex items-center gap-2">
-          <IconLoader className="w-4 h-4 animate-spin" /> Checking repository…
+          <IconLoader className="w-4 h-4 animate-spin" />{' '}
+          {checking ? 'Checking repository…' : `Looking for ${folderName} on GitHub…`}
         </div>
       )}
-      {filteredRepos.length === 0 && !checking && !initTarget && (
+      {options.length === 0 && !checking && !checkingGitHub && (
         <div className="px-3 py-1 text-fg-dim">
           {isPath
             ? checked?.error
@@ -577,7 +630,7 @@ function RepositoryFilter(
       )}
       <div className="context-menu-sep" />
       <DropdownItem
-        disabled={submitting}
+        disabled={busy}
         onClick={() => {
           p.close()
           p.onAddRepo()
@@ -588,7 +641,6 @@ function RepositoryFilter(
     </div>
   )
 }
-
 /** Branch filter panel: a search field and the remote toggle stay pinned above the branch list. */
 function BranchFilter(p: {
   data: GraphData | null

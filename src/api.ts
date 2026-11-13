@@ -1,4 +1,5 @@
 import type { ActionArgs, ActionName } from '@shared/actions'
+import type { GitHubVia } from '@shared/github'
 import type {
   ActionResult,
   CommitDetails,
@@ -8,6 +9,7 @@ import type {
   FileDiffRequest,
   FileDiffResponse,
   GitHubAccount,
+  GitHubRepoMatch,
   GraphData,
   GraphRequest,
   RepoInfo,
@@ -98,6 +100,9 @@ export const api = {
   addRepo: (path: string) => post<{ repos: RepoInfo[]; added: RepoInfo[] }>('/api/repos', { path }),
   initRepo: (path: string) =>
     post<{ repos: RepoInfo[]; added: RepoInfo[] }>('/api/repos/init', { path }),
+  /** Clone a GitHub repository (`owner/name`) into an empty folder and register it. */
+  cloneRepo: (path: string, repo: string, via: GitHubVia) =>
+    post<{ repos: RepoInfo[]; added: RepoInfo[] }>('/api/repos/clone', { path, repo, via }),
   removeRepo: (path: string) => request<{ repos: RepoInfo[] }>('DELETE', '/api/repos', { path }),
   revealRepo: (path: string, filePath?: string) =>
     post<{ ok: true }>('/api/repos/reveal', { path, filePath }),
@@ -106,6 +111,12 @@ export const api = {
   browseHome: () => request<{ path: string }>('GET', '/api/browse/home'),
   /** The GitHub CLI account used to publish repositories (fails when gh is missing or signed out). */
   githubAccount: () => request<GitHubAccount>('GET', '/api/github/account'),
+  /** Repositories with this name under the signed-in GitHub account (none when signed out). */
+  githubRepos: (name: string) =>
+    request<{ repos: GitHubRepoMatch[] }>(
+      'GET',
+      `/api/github/repos?name=${encodeURIComponent(name)}`,
+    ),
   graph: (req: GraphRequest) => post<GraphData>('/api/graph', req),
   commit: (repo: string, hash: string) => post<CommitDetails>('/api/commit', { repo, hash }),
   uncommitted: (repo: string) => post<UncommittedDetails>('/api/uncommitted', { repo }),

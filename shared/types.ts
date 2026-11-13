@@ -14,6 +14,8 @@ export interface ResolvedPath {
   repo: RepoInfo | null
   /** The path is an existing folder without a repository that can be initialized as one */
   canInit: boolean
+  /** The path is an existing empty folder outside any repository, so a repository can be cloned into it */
+  canClone: boolean
 }
 
 export interface DirectoryEntry {
@@ -190,6 +192,14 @@ export interface GitHubAccount {
   login: string
   owners: string[]
   /** Strategy that signed in; publishing uses the same one */
+  via: GitHubVia
+}
+
+/** A repository of the signed-in GitHub user or one of their organizations. */
+export interface GitHubRepoMatch {
+  /** `owner/name` as spelled on GitHub */
+  fullName: string
+  /** Strategy that found the repository; cloning uses the same one */
   via: GitHubVia
 }
 

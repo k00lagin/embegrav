@@ -9,7 +9,7 @@ import {
   type KeyboardEvent as ReactKeyboardEvent,
   type MouseEvent,
 } from 'react'
-import type { GitCommit, GraphRequest, RepoInfo } from '@shared/types'
+import type { GitCommit, GitHubRepoMatch, GraphRequest, RepoInfo } from '@shared/types'
 import { isLoopbackHost } from '@shared/local'
 import { UnauthorizedError, api, subscribeRepoEvents } from './api'
 import { layoutGraph } from './graph/layout'
@@ -193,6 +193,11 @@ function Main({ initialRepo }: { initialRepo: string | null }) {
     setRepos(r.repos)
     if (r.added[0]) selectRepo(r.added[0].path)
     setRepoPickerOpen(false)
+  }
+  const cloneRepo = async (path: string, match: GitHubRepoMatch) => {
+    const r = await api.cloneRepo(path, match.fullName, match.via)
+    setRepos(r.repos)
+    if (r.added[0]) selectRepo(r.added[0].path)
   }
   const restoreRepo = async (path: string, reselect: boolean) => {
     try {
@@ -804,6 +809,7 @@ function Main({ initialRepo }: { initialRepo: string | null }) {
         onAddRepo={addRepo}
         onSubmitRepo={submitRepo}
         onInitRepo={initializeRepo}
+        onCloneRepo={cloneRepo}
         onRepoContextMenu={onRepoContextMenu}
         repoContextMenuOpen={menu?.source === 'repository'}
         data={data}

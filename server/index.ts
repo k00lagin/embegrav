@@ -8,6 +8,7 @@ import { fileURLToPath } from 'node:url'
 import { spawn } from 'node:child_process'
 import type { FileDiffRequest, GraphRequest } from '../shared/types.ts'
 import { decodeActionRequest } from '../shared/actions.ts'
+import { GITHUB_STRATEGIES } from '../shared/github.ts'
 import { runAction } from './actions.ts'
 import {
   DEFAULT_PAIRING_TTL_MS,
@@ -18,7 +19,7 @@ import {
 } from './auth.ts'
 import { browse, homeDirectory } from './browse.ts'
 import { GitError } from './git.ts'
-import { getGitHubAccount } from './github.ts'
+import { cloneFromGitHub, findGitHubRepos, getGitHubAccount } from './github.ts'
 import {
   getCommitDetails,
   getCommitStats,
@@ -28,7 +29,15 @@ import {
   getGraph,
   getUncommittedDetails,
 } from './repo.ts'
-import { getRepo, initRepo, listRepos, registerPath, removeRepo, resolvePath } from './repos.ts'
+import {
+  cloneRepo,
+  getRepo,
+  initRepo,
+  listRepos,
+  registerPath,
+  removeRepo,
+  resolvePath,
+} from './repos.ts'
 import { subscribe } from './watcher.ts'
 import { revealInFileExplorer, workingRevealPath } from './explorer.ts'
 import { isLocalRequest } from './local.ts'
@@ -186,6 +195,18 @@ api.post('/repos/init', async (c) => {
   return c.json({ repos: listRepos(), added: [added] })
 })
 
+api.post('/repos/clone', async (c) => {
+  const body = (await c.req.json()) as { path?: unknown; repo?: unknown; via?: unknown }
+  if (typeof body.path !== 'string' || !body.path.trim())
+    return c.json({ error: 'path is required' }, 400)
+  const { repo } = body
+  if (typeof repo !== 'string' || !repo) return c.json({ error: 'repo is required' }, 400)
+  const via = GITHUB_STRATEGIES.find((s) => s === body.via)
+  if (body.via !== undefined && !via) return c.json({ error: 'Invalid argument: via' }, 400)
+  const added = await cloneRepo(body.path, (directory) => cloneFromGitHub(directory, { repo, via }))
+  return c.json({ repos: listRepos(), added: [added] })
+})
+
 api.get('/capabilities', (c) => c.json({ revealInFileExplorer: isLocalRequest(c) }))
 
 api.post('/repos', async (c) => {
@@ -218,6 +239,10 @@ api.post('/repos/reveal', async (c) => {
 })
 
 api.get('/github/account', async (c) => c.json(await getGitHubAccount()))
+
+api.get('/github/repos', async (c) =>
+  c.json({ repos: await findGitHubRepos(c.req.query('name') ?? '') }),
+)
 
 api.get('/browse', async (c) => c.json(await browse(c.req.query('path') ?? '')))
 
