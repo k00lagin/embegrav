@@ -9,6 +9,8 @@ interface Props {
   align?: 'left' | 'right'
   panelClassName?: string
   contextMenuOpen?: boolean
+  /** Right-click or the menu key on the trigger, at client or trigger coordinates */
+  onTriggerContextMenu?: (x: number, y: number) => void
   children: (close: () => void) => ReactNode
 }
 
@@ -21,6 +23,7 @@ export function Dropdown({
   align = 'left',
   panelClassName = '',
   contextMenuOpen = false,
+  onTriggerContextMenu,
   children,
 }: Props) {
   const [open, setOpen] = useState(false)
@@ -53,6 +56,20 @@ export function Dropdown({
           open ? 'border-focus' : ''
         }`}
         onClick={() => setOpen((o) => !o)}
+        onContextMenu={(e) => {
+          if (!onTriggerContextMenu) return
+          e.preventDefault()
+          e.stopPropagation()
+          onTriggerContextMenu(e.clientX, e.clientY)
+        }}
+        onKeyDown={(e) => {
+          if (!onTriggerContextMenu) return
+          if (e.key !== 'ContextMenu' && !(e.shiftKey && e.key === 'F10')) return
+          e.preventDefault()
+          e.stopPropagation()
+          const rect = e.currentTarget.getBoundingClientRect()
+          onTriggerContextMenu(rect.left, rect.bottom)
+        }}
       >
         {icon}
         <span className="max-w-[240px] truncate">{label}</span>

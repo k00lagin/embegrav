@@ -125,6 +125,9 @@ jsdom; typechecking includes the test files.
   snapshot; resets and drops return to the previous HEAD with `reset --keep`).
 - Drag a local branch label onto a commit or another branch to merge or rebase.
 - Context menus:
+  - Repository: right-click a repository in the switcher, or the switcher button
+    itself, to reveal it in the file explorer, copy its path, or remove it from
+    the list. The button uses the repository that is currently open.
   - Commit: create branch, checkout, cherry pick, revert, drop, merge into
     current, rebase current on, reset (soft / mixed / hard), create tag, copy.
   - Local branch: checkout, rename, delete (optionally on the remote too),

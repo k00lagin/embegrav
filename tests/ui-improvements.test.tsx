@@ -1036,6 +1036,73 @@ it('copies a repository path through the keyboard context menu', async () => {
   expect(await screen.findByText('Repository path copied to clipboard')).toBeTruthy()
 })
 
+it('opens the selected repository menu from the switcher without opening the list', async () => {
+  const writeText = vi.fn().mockResolvedValue(undefined)
+  Object.defineProperty(navigator, 'clipboard', { configurable: true, value: { writeText } })
+  render(<App />)
+  const trigger = await screen.findByRole('button', { name: 'Repo R' })
+  fireEvent.contextMenu(trigger, { clientX: 12, clientY: 18 })
+  const menu = screen.getByRole('menu')
+  expect(
+    within(menu)
+      .getAllByRole('menuitem')
+      .map((item) => item.textContent),
+  ).toEqual(['Reveal in File Explorer', 'Copy Path', 'Remove from list'])
+  expect(screen.queryByRole('textbox', { name: 'Search repositories' })).toBeNull()
+  fireEvent.click(within(menu).getByRole('menuitem', { name: 'Copy Path' }))
+  await waitFor(() => expect(writeText).toHaveBeenCalledWith('R'))
+})
+
+it.each(['F10', 'ContextMenu'])(
+  'opens the selected repository menu from the switcher with %s',
+  async (key) => {
+    render(<App />)
+    const trigger = await screen.findByRole('button', { name: 'Repo R' })
+    trigger.focus()
+    fireEvent.keyDown(trigger, { key, shiftKey: key === 'F10' })
+    const items = within(screen.getByRole('menu')).getAllByRole('menuitem')
+    expect(document.activeElement).toBe(items[0])
+    expect(items.map((item) => item.textContent)).toEqual([
+      'Reveal in File Explorer',
+      'Copy Path',
+      'Remove from list',
+    ])
+    fireEvent.keyDown(items[0], { key: 'Escape' })
+    expect(screen.queryByRole('menu')).toBeNull()
+    expect(document.activeElement).toBe(trigger)
+    expect(screen.queryByRole('textbox', { name: 'Search repositories' })).toBeNull()
+  },
+)
+
+it('keeps the repository list open when the switcher trigger opens the current repository menu', async () => {
+  vi.mocked(api.repos).mockResolvedValue({
+    repos: [
+      { path: 'R', name: 'Repo R' },
+      { path: 'S', name: 'Repo S' },
+    ],
+  })
+  const reveal = vi.spyOn(api, 'revealRepo').mockResolvedValue({ ok: true })
+  render(<App />)
+  fireEvent.click(await screen.findByRole('button', { name: 'Repo R' }))
+  const search = screen.getByRole('textbox', { name: 'Search repositories' })
+  fireEvent.contextMenu(screen.getByRole('button', { name: 'Repo R' }), { clientX: 8, clientY: 8 })
+  expect(screen.getByRole('textbox', { name: 'Search repositories' })).toBe(search)
+  fireEvent.click(screen.getByRole('menuitem', { name: 'Reveal in File Explorer' }))
+  await waitFor(() => expect(reveal).toHaveBeenCalledWith('R'))
+  expect(reveal).not.toHaveBeenCalledWith('S')
+})
+
+it('does not open a repository menu from the switcher when nothing is selected', async () => {
+  vi.spyOn(api, 'repos').mockResolvedValue({ repos: [] })
+  render(<App />)
+  const trigger = await screen.findByRole('button', { name: 'Select repository' })
+  fireEvent.contextMenu(trigger)
+  trigger.focus()
+  fireEvent.keyDown(trigger, { key: 'ContextMenu' })
+  fireEvent.keyDown(trigger, { key: 'F10', shiftKey: true })
+  expect(screen.queryByRole('menu')).toBeNull()
+})
+
 it('keeps the repository dropdown and its filter while using a context menu', async () => {
   render(<App />)
   fireEvent.click(await screen.findByRole('button', { name: 'Repo R' }))

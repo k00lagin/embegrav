@@ -105,6 +105,9 @@ export function Toolbar(p: Props) {
         title={current?.path ?? 'Repository'}
         panelClassName="w-[360px] max-w-[calc(100vw-16px)] !min-w-0 overflow-x-hidden"
         contextMenuOpen={p.repoContextMenuOpen}
+        onTriggerContextMenu={
+          current ? (x, y) => p.onRepoContextMenu(current.path, x, y) : undefined
+        }
       >
         {(close) => (
           <RepositoryFilter
