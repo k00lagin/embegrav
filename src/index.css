@@ -616,6 +616,7 @@ input[type='radio']:disabled {
 
 /* Inline stage / unstage / discard buttons over the hovered file tree row */
 .tree-row-actions {
+  --tree-row-actions-background: var(--vscode-list-hoverBackground);
   position: absolute;
   right: 40px;
   z-index: 2;
@@ -623,18 +624,16 @@ input[type='radio']:disabled {
   align-items: center;
   gap: 1px;
   padding: 0 2px;
+  /* Let the tree's focus outline show through the overlay. */
+  border-block: 1px solid transparent;
   border-radius: 3px;
   background:
-    linear-gradient(var(--vscode-list-hoverBackground), var(--vscode-list-hoverBackground)),
+    linear-gradient(var(--tree-row-actions-background), var(--tree-row-actions-background)),
     var(--vscode-sideBar-background);
+  background-clip: padding-box;
 }
 .tree-row-actions.selected {
-  background:
-    linear-gradient(
-      var(--vscode-list-activeSelectionBackground),
-      var(--vscode-list-activeSelectionBackground)
-    ),
-    var(--vscode-sideBar-background);
+  --tree-row-actions-background: var(--vscode-list-activeSelectionBackground);
   color: var(--vscode-list-activeSelectionForeground);
 }
 
