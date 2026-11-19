@@ -1,5 +1,5 @@
 import { useEffect, useMemo, useRef, useState, type ReactNode } from 'react'
-import { GITHUB_REPO_NAME_RE } from '@shared/github'
+import { GITHUB_REPO_NAME_RE, githubWebUrl } from '@shared/github'
 import type { GitHubRepoMatch, GraphData, RepoInfo } from '@shared/types'
 import { sortByFrecency } from '@/lib/frecency'
 import type { Settings } from '@/lib/settings'
@@ -290,36 +290,51 @@ export function Toolbar(p: Props) {
       >
         {(close) => (
           <div className="py-1 min-w-[320px]">
-            {(p.data?.remotes ?? []).map((r) => (
-              <div key={r.name} className="flex items-center px-3 py-1 gap-2">
-                <span className="flex flex-col min-w-0 flex-1">
-                  <span className="font-medium">{r.name}</span>
-                  <span className="text-xs opacity-60 truncate mono">{r.url}</span>
-                </span>
-                <button
-                  type="button"
-                  className="icon-btn"
-                  title="Edit remote"
-                  onClick={() => {
-                    close()
-                    p.onEditRemote(r.name)
-                  }}
-                >
-                  <IconPencil className="w-3.5 h-3.5" />
-                </button>
-                <button
-                  type="button"
-                  className="icon-btn"
-                  title="Remove remote"
-                  onClick={() => {
-                    close()
-                    p.onRemoveRemote(r.name)
-                  }}
-                >
-                  <IconTrash2 className="w-3.5 h-3.5" />
-                </button>
-              </div>
-            ))}
+            {(p.data?.remotes ?? []).map((r) => {
+              const webUrl = githubWebUrl(r.url)
+              return (
+                <div key={r.name} className="flex items-center px-3 py-1 gap-2">
+                  <span className="flex flex-col min-w-0 flex-1">
+                    <span className="font-medium">{r.name}</span>
+                    <span className="text-xs opacity-60 truncate mono">{r.url}</span>
+                  </span>
+                  {webUrl && (
+                    <a
+                      className="icon-btn"
+                      href={webUrl}
+                      target="_blank"
+                      rel="noreferrer"
+                      title={`Open ${webUrl.slice('https://'.length)} on GitHub`}
+                      onClick={close}
+                    >
+                      <IconGithub className="w-3.5 h-3.5" />
+                    </a>
+                  )}
+                  <button
+                    type="button"
+                    className="icon-btn"
+                    title="Edit remote"
+                    onClick={() => {
+                      close()
+                      p.onEditRemote(r.name)
+                    }}
+                  >
+                    <IconPencil className="w-3.5 h-3.5" />
+                  </button>
+                  <button
+                    type="button"
+                    className="icon-btn"
+                    title="Remove remote"
+                    onClick={() => {
+                      close()
+                      p.onRemoveRemote(r.name)
+                    }}
+                  >
+                    <IconTrash2 className="w-3.5 h-3.5" />
+                  </button>
+                </div>
+              )
+            })}
             {(p.data?.remotes.length ?? 0) === 0 && (
               <div className="px-3 py-1 text-fg-dim">No remotes configured</div>
             )}

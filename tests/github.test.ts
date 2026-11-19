@@ -12,6 +12,7 @@ import {
   type GitHubDeps,
 } from '../server/github.ts'
 import { decodeActionRequest } from '../shared/actions.ts'
+import { githubWebUrl } from '../shared/github.ts'
 
 const unused = () => Promise.reject(new Error('unused'))
 
@@ -454,4 +455,30 @@ describe('cloning from GitHub', () => {
       expect(deps.fetch).not.toHaveBeenCalled()
     },
   )
+})
+
+describe('githubWebUrl', () => {
+  it('maps github.com remotes in every URL form to the repository page', () => {
+    for (const url of [
+      'https://github.com/me/demo.git',
+      'https://github.com/me/demo',
+      'https://token@github.com/me/demo.git/',
+      'git@github.com:me/demo.git',
+      'ssh://git@github.com:22/me/demo.git',
+      'git://github.com/me/demo',
+    ])
+      expect(githubWebUrl(url), url).toBe('https://github.com/me/demo')
+    expect(githubWebUrl('git@github.com:me/my.repo.git')).toBe('https://github.com/me/my.repo')
+  })
+
+  it('returns null for other hosts and non-repository paths', () => {
+    for (const url of [
+      'https://gitlab.com/me/demo.git',
+      'https://github.com.evil.example/me/demo',
+      'https://github.com/me/demo/tree/main',
+      'C:/repos/demo',
+      '../demo.git',
+    ])
+      expect(githubWebUrl(url), url).toBeNull()
+  })
 })
