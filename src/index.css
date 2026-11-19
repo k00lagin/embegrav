@@ -418,8 +418,14 @@ input[type='radio']:disabled {
   white-space: normal;
   padding: 0;
   background: var(--vscode-sideBar-background);
-  border-top: 1px solid var(--vscode-panel-border);
-  border-bottom: 1px solid var(--vscode-panel-border);
+}
+.details-row-content {
+  position: relative;
+  padding-block: 1px;
+  /* Paint the dividers behind the graph without affecting the row height. */
+  box-shadow:
+    inset 0 1px 0 var(--vscode-panel-border),
+    inset 0 -1px 0 var(--vscode-panel-border);
 }
 
 .ref-label {

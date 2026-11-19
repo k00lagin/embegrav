@@ -411,7 +411,7 @@ function RowGroup(p: RowProps) {
       {p.details && (
         <tr className="details-row">
           <td colSpan={p.colSpan}>
-            <div className="relative">
+            <div className="details-row-content">
               <GraphPassThrough active={row.graph.active} maxLanes={p.maxLanes} />
               <div style={{ marginLeft: graphWidth(p.maxLanes) + 8 }}>{p.details}</div>
             </div>
