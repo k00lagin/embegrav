@@ -580,6 +580,28 @@ it('hides columns from the header menu and persists the layout', async () => {
   })
 })
 
+it('widens the last commit column when dragged left and narrows it when dragged right', async () => {
+  render(<App />)
+  const header = await screen.findByRole('columnheader', { name: 'Commit' })
+  const handle = within(header).getByTitle('Drag to resize, double-click to reset')
+  const savedWidths = () => JSON.parse(localStorage.getItem('embegrav.columns')!).widths
+
+  fireEvent.mouseDown(handle, { clientX: 300 })
+  fireEvent.mouseMove(window, { clientX: 270 })
+  expect(savedWidths()).toEqual({ hash: 120 })
+  fireEvent.mouseUp(window)
+
+  fireEvent.mouseDown(handle, { clientX: 270 })
+  fireEvent.mouseMove(window, { clientX: 290 })
+  expect(savedWidths()).toEqual({ hash: 100 })
+  fireEvent.mouseMove(window, { clientX: 400 })
+  expect(savedWidths()).toEqual({ hash: 40 })
+  fireEvent.mouseUp(window)
+
+  fireEvent.doubleClick(handle)
+  expect(savedWidths()).toEqual({})
+})
+
 it.each(['F10', 'ContextMenu'])(
   'opens the graph context menu with %s and resumes graph navigation after Escape',
   async (key) => {

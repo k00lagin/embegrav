@@ -129,7 +129,7 @@ export function CommitTable(p: Props) {
         ...latest,
         widths: {
           ...latest.widths,
-          [id]: Math.round(Math.max(MIN_COLUMN_WIDTH, startW + ev.clientX - startX)),
+          [id]: Math.round(Math.max(MIN_COLUMN_WIDTH, startW + (startX - ev.clientX))),
         },
       }
       p.onColumnsChange(latest)
