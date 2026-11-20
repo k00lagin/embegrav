@@ -1,13 +1,13 @@
 import { useEffect, useMemo, useRef, useState, type ReactNode } from 'react'
 import { GITHUB_REPO_NAME_RE, githubWebUrl } from '@shared/github'
 import type { GitHubRepoMatch, GraphData, RepoInfo } from '@shared/types'
-import { sortByFrecency } from '@/lib/frecency'
+import { groupByFrecency } from '@/lib/frecency'
 import type { Settings } from '@/lib/settings'
 import { api } from '@/api'
 import { useToast } from './Toast'
 import { Dropdown, DropdownItem } from './Dropdown'
+import { BranchFilter } from './BranchFilter'
 import IconFolderGit2 from '~icons/lucide/folder-git-2'
-import IconGitBranch from '~icons/lucide/git-branch'
 import IconSearch from '~icons/lucide/search'
 import IconRefreshCw from '~icons/lucide/refresh-cw'
 import IconCloudDownload from '~icons/lucide/cloud-download'
@@ -84,18 +84,11 @@ interface Props {
 export function Toolbar(p: Props) {
   const searchInput = useRef<HTMLInputElement>(null)
   const current = p.repos.find((r) => r.path === p.repo)
-  const allSelected = p.branches === null
   const upstream = p.data?.upstream
 
   useEffect(() => {
     if (p.search.open) searchInput.current?.focus()
   }, [p.search.open])
-
-  const branchesLabel = allSelected
-    ? 'Branches: Show All'
-    : p.branches!.length === 1
-      ? `Branch: ${p.branches![0]}`
-      : `Branches: ${p.branches!.length} selected`
 
   return (
     <div className="flex items-center gap-2 px-2 h-10 border-b border-border bg-bg-2 shrink-0 flex-wrap">
@@ -124,21 +117,14 @@ export function Toolbar(p: Props) {
         )}
       </Dropdown>
 
-      <Dropdown
-        icon={<IconGitBranch className="w-4 h-4 shrink-0" />}
-        label={branchesLabel}
-        title="Filter the graph to selected branches"
-      >
-        {() => (
-          <BranchFilter
-            data={p.data}
-            branches={p.branches}
-            onBranchesChange={p.onBranchesChange}
-            showRemote={p.settings.showRemoteBranches}
-            onShowRemoteChange={(v) => p.updateSettings({ showRemoteBranches: v })}
-          />
-        )}
-      </Dropdown>
+      <BranchFilter
+        key={p.repo}
+        data={p.data}
+        branches={p.branches}
+        onBranchesChange={p.onBranchesChange}
+        showRemote={p.settings.showRemoteBranches}
+        onShowRemoteChange={(v) => p.updateSettings({ showRemoteBranches: v })}
+      />
 
       <span className="flex-1" />
 
@@ -436,14 +422,20 @@ function RepositoryFilter(
   const newRepo = resolvedRepo && !p.repos.some((r) => r.path === resolvedRepo.path)
   const needle = path.toLowerCase()
   // Ranked once per opening, so rows do not move while the menu is open.
-  const rankedRepos = useMemo(() => sortByFrecency(p.repos), [p.repos])
-  const filteredRepos = rankedRepos.filter(
-    (r) => r.name.toLowerCase().includes(needle) || r.path.toLowerCase().includes(needle),
-  )
-  if (resolvedRepo && !filteredRepos.some((r) => r.path === resolvedRepo.path))
-    filteredRepos.push(resolvedRepo)
+  const groupedRepos = useMemo(() => groupByFrecency(p.repos), [p.repos])
+  const matchesRepo = (r: RepoInfo) =>
+    r.path === resolvedRepo?.path ||
+    r.name.toLowerCase().includes(needle) ||
+    r.path.toLowerCase().includes(needle)
+  const recentRepos = groupedRepos.recent.filter(matchesRepo)
+  const otherRepos = groupedRepos.others.filter(matchesRepo)
+  if (newRepo) otherRepos.push(resolvedRepo)
   const options: FilterOption[] = [
-    ...filteredRepos.map((repo) => ({ key: repoKey(repo.path), kind: 'repo' as const, repo })),
+    ...[...recentRepos, ...otherRepos].map((repo) => ({
+      key: repoKey(repo.path),
+      kind: 'repo' as const,
+      repo,
+    })),
     ...(offerInit ? [{ key: 'init', kind: 'init' as const }] : []),
     // Matches arrive after Initialize is usable; listing them below it keeps
     // the rows and the default highlight from moving under the user.
@@ -535,6 +527,71 @@ function RepositoryFilter(
     // oxlint-disable-next-line react/exhaustive-effect-dependencies -- selection and filtering move the highlighted row
   }, [highlighted?.key, query])
 
+  const renderOption = (option: FilterOption) => {
+    const active = option.key === highlighted?.key
+    const ref = active ? highlightedRow : undefined
+    const spinner = <IconLoader className="w-4 h-4 shrink-0 animate-spin" />
+    if (option.kind !== 'repo') {
+      return (
+        <div key={option.key} ref={ref}>
+          <DropdownItem active={active} disabled={busy} onClick={() => choose(option)}>
+            {submitting === option.key ? (
+              spinner
+            ) : option.kind === 'clone' ? (
+              <IconGithub className="w-4 h-4 shrink-0" />
+            ) : (
+              <IconFolderPlus className="w-4 h-4 shrink-0" />
+            )}
+            <span className="flex flex-col min-w-0" title={path}>
+              <span className="truncate">
+                {option.kind === 'clone'
+                  ? `Clone ${option.match.fullName}`
+                  : `Initialize ${folderName}`}
+              </span>
+              <span className="text-xs opacity-60 truncate mono">{path}</span>
+            </span>
+          </DropdownItem>
+        </div>
+      )
+    }
+    const r = option.repo
+    const adding = newRepo && r.path === resolvedRepo?.path
+    return (
+      <div
+        key={option.key}
+        ref={ref}
+        onContextMenu={(e) => {
+          e.preventDefault()
+          e.stopPropagation()
+          if (adding) return
+          p.onRepoContextMenu(r.path, e.clientX, e.clientY)
+        }}
+        onKeyDown={(e) => {
+          if (e.key !== 'ContextMenu' && !(e.shiftKey && e.key === 'F10')) return
+          e.preventDefault()
+          e.stopPropagation()
+          if (adding) return
+          const rect = e.currentTarget.getBoundingClientRect()
+          p.onRepoContextMenu(r.path, rect.left, rect.bottom)
+        }}
+      >
+        <DropdownItem
+          className="min-w-0"
+          active={active}
+          disabled={busy}
+          onClick={() => choose(option)}
+        >
+          {adding &&
+            (submitting === option.key ? spinner : <IconPlus className="w-4 h-4 shrink-0" />)}
+          <span className="flex flex-col min-w-0" title={r.path}>
+            <span className="truncate">{adding ? `Add ${r.name}` : r.name}</span>
+            <span className="text-xs opacity-60 truncate mono">{r.path}</span>
+          </span>
+        </DropdownItem>
+      </div>
+    )
+  }
+
   return (
     <div className="pb-1 min-w-0 w-full">
       <div className="sticky top-0 z-10 px-2 pt-2 pb-1.5 bg-[var(--vscode-dropdown-background)] border-b border-border">
@@ -568,70 +625,24 @@ function RepositoryFilter(
           }}
         />
       </div>
-      {options.map((option) => {
-        const active = option.key === highlighted?.key
-        const ref = active ? highlightedRow : undefined
-        const spinner = <IconLoader className="w-4 h-4 shrink-0 animate-spin" />
-        if (option.kind !== 'repo') {
-          return (
-            <div key={option.key} ref={ref}>
-              <DropdownItem active={active} disabled={busy} onClick={() => choose(option)}>
-                {submitting === option.key ? (
-                  spinner
-                ) : option.kind === 'clone' ? (
-                  <IconGithub className="w-4 h-4 shrink-0" />
-                ) : (
-                  <IconFolderPlus className="w-4 h-4 shrink-0" />
-                )}
-                <span className="flex flex-col min-w-0" title={path}>
-                  <span className="truncate">
-                    {option.kind === 'clone'
-                      ? `Clone ${option.match.fullName}`
-                      : `Initialize ${folderName}`}
-                  </span>
-                  <span className="text-xs opacity-60 truncate mono">{path}</span>
-                </span>
-              </DropdownItem>
-            </div>
-          )
-        }
-        const r = option.repo
-        const adding = newRepo && r.path === resolvedRepo?.path
-        return (
-          <div
-            key={option.key}
-            ref={ref}
-            onContextMenu={(e) => {
-              e.preventDefault()
-              e.stopPropagation()
-              if (adding) return
-              p.onRepoContextMenu(r.path, e.clientX, e.clientY)
-            }}
-            onKeyDown={(e) => {
-              if (e.key !== 'ContextMenu' && !(e.shiftKey && e.key === 'F10')) return
-              e.preventDefault()
-              e.stopPropagation()
-              if (adding) return
-              const rect = e.currentTarget.getBoundingClientRect()
-              p.onRepoContextMenu(r.path, rect.left, rect.bottom)
-            }}
-          >
-            <DropdownItem
-              className="min-w-0"
-              active={active}
-              disabled={busy}
-              onClick={() => choose(option)}
-            >
-              {adding &&
-                (submitting === option.key ? spinner : <IconPlus className="w-4 h-4 shrink-0" />)}
-              <span className="flex flex-col min-w-0" title={r.path}>
-                <span className="truncate">{adding ? `Add ${r.name}` : r.name}</span>
-                <span className="text-xs opacity-60 truncate mono">{r.path}</span>
-              </span>
-            </DropdownItem>
-          </div>
-        )
-      })}
+      <DropdownItem
+        disabled={busy}
+        onClick={() => {
+          p.close()
+          p.onAddRepo()
+        }}
+      >
+        <IconPlus className="w-4 h-4" /> Add repository…
+      </DropdownItem>
+      <div className="context-menu-sep" role="separator" />
+      {recentRepos.length > 0 && (
+        <>
+          <h2 className="px-3 py-1 text-xs text-fg-dim uppercase">Recent repositories</h2>
+          {options.slice(0, recentRepos.length).map(renderOption)}
+          <div className="context-menu-sep" role="separator" />
+        </>
+      )}
+      {options.slice(recentRepos.length).map(renderOption)}
       {(checking || checkingGitHub) && (
         <div role="status" className="px-3 py-1 text-fg-dim flex items-center gap-2">
           <IconLoader className="w-4 h-4 animate-spin" />{' '}
@@ -647,104 +658,6 @@ function RepositoryFilter(
             : needle
               ? 'No matching repositories'
               : 'No repositories'}
-        </div>
-      )}
-      <div className="context-menu-sep" />
-      <DropdownItem
-        disabled={busy}
-        onClick={() => {
-          p.close()
-          p.onAddRepo()
-        }}
-      >
-        <IconPlus className="w-4 h-4" /> Add repository…
-      </DropdownItem>
-    </div>
-  )
-}
-/** Branch filter panel: a search field and the remote toggle stay pinned above the branch list. */
-function BranchFilter(p: {
-  data: GraphData | null
-  branches: string[] | null
-  onBranchesChange: (b: string[] | null) => void
-  showRemote: boolean
-  onShowRemoteChange: (show: boolean) => void
-}) {
-  const [query, setQuery] = useState('')
-  const input = useRef<HTMLInputElement>(null)
-  const allSelected = p.branches === null
-  const needle = query.trim().toLowerCase()
-  const matches = (name: string) => name.toLowerCase().includes(needle)
-  const refs = p.data?.refs ?? []
-  const localBranches = refs.filter((r) => r.type === 'head' && matches(r.name))
-  const remoteBranches = p.showRemote
-    ? refs.filter((r) => r.type === 'remote' && matches(r.name))
-    : []
-
-  useEffect(() => {
-    input.current?.focus()
-  }, [])
-
-  const toggleBranch = (name: string) => {
-    if (p.branches === null) {
-      p.onBranchesChange([name])
-      return
-    }
-    const next = p.branches.includes(name)
-      ? p.branches.filter((b) => b !== name)
-      : [...p.branches, name]
-    p.onBranchesChange(next.length === 0 ? null : next)
-  }
-
-  const item = (name: string, bold = false) => (
-    <DropdownItem key={name} onClick={() => toggleBranch(name)}>
-      <input type="checkbox" readOnly checked={!allSelected && p.branches!.includes(name)} />
-      <span className={`truncate ${bold ? 'font-bold' : ''}`}>{name}</span>
-    </DropdownItem>
-  )
-
-  return (
-    <div className="pb-1 min-w-[260px]">
-      <div className="sticky top-0 z-10 flex flex-col gap-1.5 px-2 pt-2 pb-1.5 bg-[var(--vscode-dropdown-background)] border-b border-border">
-        <input
-          ref={input}
-          type="text"
-          className="w-full"
-          placeholder="Search branches"
-          aria-label="Search branches"
-          value={query}
-          onChange={(e) => setQuery(e.target.value)}
-          onKeyDown={(e) => {
-            if (e.key !== 'Enter') return
-            e.preventDefault()
-            const first = localBranches[0] ?? remoteBranches[0]
-            if (first) toggleBranch(first.name)
-          }}
-        />
-        <label className="flex items-center gap-2 px-1 cursor-pointer select-none">
-          <input
-            type="checkbox"
-            checked={p.showRemote}
-            onChange={(e) => p.onShowRemoteChange(e.target.checked)}
-          />
-          Show remote branches
-        </label>
-      </div>
-      <DropdownItem active={allSelected} onClick={() => p.onBranchesChange(null)}>
-        <input type="checkbox" readOnly checked={allSelected} /> Show All
-      </DropdownItem>
-      <div className="context-menu-sep" />
-      {localBranches.map((b) => item(b.name, b.name === p.data?.currentBranch))}
-      {remoteBranches.length > 0 && (
-        <>
-          {localBranches.length > 0 && <div className="context-menu-sep" />}
-          <div className="px-3 py-1 text-xs text-fg-dim uppercase">Remote branches</div>
-          {remoteBranches.map((b) => item(b.name))}
-        </>
-      )}
-      {localBranches.length === 0 && remoteBranches.length === 0 && (
-        <div className="px-3 py-1 text-fg-dim">
-          {needle ? 'No matching branches' : 'No branches'}
         </div>
       )}
     </div>

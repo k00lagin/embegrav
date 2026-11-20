@@ -139,6 +139,24 @@ describe('graph visibility', () => {
     expect(visible.refs.map((r) => r.type).sort()).toEqual(['head', 'remote', 'tag'])
   })
 
+  it('shows local history when the only selected branch is a hidden remote', async () => {
+    const base = await commit('base')
+    await git(repo, ['switch', '--detach'])
+    const remote = await commit('remote change')
+    await git(repo, ['update-ref', 'refs/remotes/origin/main', remote])
+    await git(repo, ['switch', '-c', 'feature/local', base])
+    const local = await commit('local change')
+    await git(repo, ['switch', 'main'])
+
+    const branches = ['origin/main']
+    const visible = await graph({ branches })
+    expect(visible.commits.map((c) => c.hash)).toEqual([remote, base])
+    const hidden = await graph({ branches, showRemoteBranches: false })
+    expect(hidden.commits.map((c) => c.hash)).toEqual([local, base])
+    const mixed = await graph({ branches: [...branches, 'main'], showRemoteBranches: false })
+    expect(mixed.commits.map((c) => c.hash)).toEqual([base])
+  })
+
   it('keeps pagination available when stash helpers occupy the raw commit window', async () => {
     await writeFile(join(repo, 'tracked.txt'), 'base\n')
     const hashes = [await commit('base')]

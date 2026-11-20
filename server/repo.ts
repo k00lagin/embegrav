@@ -359,12 +359,15 @@ async function getHistory(
   const rawLimit = req.maxCommits + 1 + 2 * stashesAll.length
   const args = ['log', `--max-count=${rawLimit}`, orderFlag, commitFormat(GRAPH_FIELDS)]
   const revs: string[] = []
-  if (req.branches === null) {
+  const branches = req.showRemoteBranches
+    ? req.branches
+    : req.branches?.filter((name) => refs.some((r) => r.type === 'head' && r.name === name))
+  if (!branches?.length) {
     revs.push('--branches')
     if (req.showRemoteBranches) revs.push('--remotes')
     if (req.showTags) revs.push('--tags')
   } else {
-    for (const b of req.branches) {
+    for (const b of branches) {
       if (refs.some((r) => (r.type === 'head' || r.type === 'remote') && r.name === b)) {
         revs.push(b)
       }

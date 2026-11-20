@@ -224,7 +224,7 @@ it.each(['selection', 'keyboard', 'close', 'filter', 'repository'])(
     if (change === 'close') fireEvent.keyDown(window, { key: 'Escape' })
     if (change === 'filter') {
       fireEvent.click(screen.getByRole('button', { name: 'Branches: Show All' }))
-      fireEvent.click(screen.getByRole('button', { name: 'main' }))
+      fireEvent.click(screen.getByRole('checkbox', { name: 'main' }))
       await waitFor(() => expect(api.graph).toHaveBeenCalledTimes(3))
     }
     if (change === 'repository') {
@@ -695,12 +695,27 @@ it('lists the repositories opened most often and recently first', async () => {
   }
   fireEvent.click(await screen.findByRole('button', { name: 'Repo R' }))
   expect(names()).toEqual(['Repo R', 'Repo S', 'Repo T'])
+  expect(screen.queryByRole('heading', { name: 'Recent repositories' })).toBeNull()
   fireEvent.click(screen.getByRole('button', { name: 'Repo R' }))
   await open('Repo R', 'Repo T')
   await open('Repo T', 'Repo S')
   await open('Repo S', 'Repo T')
   fireEvent.click(await screen.findByRole('button', { name: 'Repo T' }))
   expect(names()).toEqual(['Repo T', 'Repo S', 'Repo R'])
+  const search = screen.getByRole('textbox', { name: 'Search repositories' })
+  const addRepository = screen.getByRole('button', { name: 'Add repository…' })
+  const heading = screen.getByRole('heading', { name: 'Recent repositories' })
+  expect(search.parentElement?.nextElementSibling).toBe(addRepository)
+  expect(addRepository.nextElementSibling?.nextElementSibling).toBe(heading)
+  const recent = heading.nextElementSibling
+  expect(recent?.textContent).toBe('Repo TT')
+  expect(recent?.nextElementSibling?.textContent).toBe('Repo SS')
+  const separator = recent?.nextElementSibling?.nextElementSibling
+  expect(separator?.getAttribute('role')).toBe('separator')
+  expect(separator?.nextElementSibling?.textContent).toBe('Repo RR')
+  fireEvent.change(search, { target: { value: 'Repo R' } })
+  expect(names()).toEqual(['Repo R'])
+  expect(screen.queryByRole('heading', { name: 'Recent repositories' })).toBeNull()
 })
 
 it('resets the repository highlight when filtering and ignores navigation with no matches', async () => {
@@ -1255,24 +1270,61 @@ it('shows an Undo action for undoable results and runs the returned step', async
 })
 
 it('searches branches and toggles remote branches from the branch filter', async () => {
+  vi.mocked(api.graph).mockResolvedValue({
+    ...graph,
+    refs: [...graph.refs, { type: 'remote', name: 'team/review/main', hash: C, remote: 'team' }],
+    remotes: [...graph.remotes, { name: 'team/review', url: 'https://example.com/review.git' }],
+  })
   render(<App />)
   await screen.findByText('Fix typo')
-  expect(screen.queryByText('Show Remote Branches')).toBeNull()
   fireEvent.click(screen.getByTitle('Filter the graph to selected branches'))
   const search = screen.getByRole('textbox', { name: 'Search branches' })
   expect(document.activeElement).toBe(search)
   const panel = within(search.closest('.dropdown-panel') as HTMLElement)
+  const remote = within(panel.getByRole('group', { name: 'Remote' }))
+  const origin = remote.getByRole('button', { name: 'origin' })
+  const local = panel.getByRole('button', { name: 'Local' })
+  expect(within(remote.getByRole('group', { name: 'team/review' })).getByText('main')).toBeTruthy()
+  expect(panel.getByRole<HTMLInputElement>('checkbox', { name: 'All branches' }).checked).toBe(true)
+  fireEvent.click(origin)
+  fireEvent.click(local)
+  expect(origin.getAttribute('aria-expanded')).toBe('false')
+  expect(local.getAttribute('aria-expanded')).toBe('false')
   fireEvent.change(search, { target: { value: 'SEARCH' } })
-  expect(panel.getByText('feature/search')).toBeTruthy()
-  expect(panel.getByText('origin/feature/search')).toBeTruthy()
-  expect(panel.queryByText('origin/main')).toBeNull()
-  fireEvent.click(panel.getByRole('checkbox', { name: 'Show remote branches' }))
+  expect(panel.getByRole('checkbox', { name: 'feature/search' })).toBeTruthy()
+  const remoteBranch = panel.getByRole<HTMLInputElement>('checkbox', {
+    name: 'origin/feature/search',
+  })
+  expect(panel.queryByRole('checkbox', { name: 'origin/main' })).toBeNull()
+  fireEvent.click(remoteBranch)
+  expect(remoteBranch.checked).toBe(true)
+  const showRemote = panel.getByRole('switch', { name: 'Show remote branches' })
+  fireEvent.click(showRemote)
   expect(JSON.parse(localStorage.getItem('embegrav.settings')!).showRemoteBranches).toBe(false)
-  expect(panel.queryByText('origin/feature/search')).toBeNull()
+  expect(showRemote.getAttribute('aria-checked')).toBe('false')
+  expect(panel.queryByRole('group', { name: 'Remote' })).toBeNull()
+  expect(screen.getByTitle('Filter the graph to selected branches').textContent).toContain(
+    'Show All',
+  )
+  fireEvent.click(showRemote)
+  expect(
+    panel.getByRole<HTMLInputElement>('checkbox', { name: 'origin/feature/search' }).checked,
+  ).toBe(true)
+  fireEvent.click(showRemote)
   fireEvent.keyDown(search, { key: 'Enter' })
   expect(screen.getByTitle('Filter the graph to selected branches').textContent).toContain(
     'Branch: feature/search',
   )
   fireEvent.change(search, { target: { value: 'nope' } })
   expect(panel.getByText('No matching branches')).toBeTruthy()
+  fireEvent.change(search, { target: { value: '' } })
+  expect(panel.getByRole('button', { name: 'Local' }).getAttribute('aria-expanded')).toBe('false')
+  await waitFor(() =>
+    expect(api.graph).toHaveBeenLastCalledWith(
+      expect.objectContaining({
+        showRemoteBranches: false,
+        branches: ['origin/feature/search', 'feature/search'],
+      }),
+    ),
+  )
 })

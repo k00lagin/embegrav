@@ -30,9 +30,16 @@ export function recordRepoVisit(path: string, now = Date.now()): void {
   saveLocal(KEY, visits)
 }
 
-/** Most frecent first; repositories with equal scores (such as never opened) keep their order. */
-export function sortByFrecency<T extends { path: string }>(repos: T[], now = Date.now()): T[] {
+/** Rank repositories with a visit score and keep the original order of the rest. */
+export function groupByFrecency<T extends { path: string }>(repos: T[], now = Date.now()) {
   const visits = loadLocal<Visits>(KEY, {}, isVisits)
-  const rank = new Map(repos.map((r) => [r.path, decayed(visits[r.path], now)]))
-  return repos.toSorted((a, b) => rank.get(b.path)! - rank.get(a.path)!)
+  const ranked: { repo: T; score: number }[] = []
+  const others: T[] = []
+  for (const repo of repos) {
+    const visit = visits[repo.path]
+    if (visit && visit.score > 0) ranked.push({ repo, score: decayed(visit, now) })
+    else others.push(repo)
+  }
+  ranked.sort((a, b) => b.score - a.score)
+  return { recent: ranked.map(({ repo }) => repo), others }
 }

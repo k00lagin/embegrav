@@ -1,17 +1,20 @@
 // @vitest-environment jsdom
 import { beforeEach, expect, it } from 'vitest'
-import { recordRepoVisit, sortByFrecency } from '@/lib/frecency'
+import { groupByFrecency, recordRepoVisit } from '@/lib/frecency'
 
 const DAY = 24 * 60 * 60 * 1000
 const NOW = 1_800_000_000_000
 const repos = [{ path: 'A' }, { path: 'B' }, { path: 'C' }]
-const order = () => sortByFrecency(repos, NOW).map((r) => r.path)
+const order = () => {
+  const { recent, others } = groupByFrecency(repos, NOW)
+  return [...recent, ...others].map((r) => r.path)
+}
 
 beforeEach(() => localStorage.clear())
 
 it('keeps the given order for repositories never opened', () => {
-  recordRepoVisit('C', NOW)
-  expect(order()).toEqual(['C', 'A', 'B'])
+  recordRepoVisit('C', NOW - 365 * DAY)
+  expect(groupByFrecency(repos, NOW)).toEqual({ recent: [repos[2]], others: repos.slice(0, 2) })
 })
 
 it('ranks frequent recent use above a single recent visit', () => {
