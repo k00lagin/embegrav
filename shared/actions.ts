@@ -4,6 +4,7 @@ import { GITHUB_STRATEGIES, type GitHubVia } from './github.ts'
 export interface ActionArgs {
   fetch: { remote?: string; prune?: boolean; pruneTags?: boolean }
   pull: { remote?: string; branch?: string; rebase?: boolean; noFF?: boolean; squash?: boolean }
+  resetToRemote: { remote: string; branch: string; localBranch: string }
   push: {
     remote: string
     branch: string
@@ -95,6 +96,7 @@ const rules = {
     noFF: 'boolean?',
     squash: 'boolean?',
   },
+  resetToRemote: { remote: 'string', branch: 'string', localBranch: 'string' },
   push: {
     remote: 'string',
     branch: 'string',

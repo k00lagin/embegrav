@@ -53,6 +53,12 @@ export interface DialogSpec {
   submitLabel?: string
   cancelLabel?: string
   danger?: boolean
+  alternateSubmit?: {
+    /** Boolean result field set when the alternate button is clicked */
+    name: string
+    label: string
+    disabled?: (values: FieldValues) => boolean
+  }
   /** Return an error string to keep the dialog open */
   validate?: (values: FieldValues) => string | null
 }
@@ -91,7 +97,7 @@ export function DialogProvider({ children }: { children: ReactNode }) {
   const seq = useRef(0)
 
   const open = useCallback((spec: DialogSpec) => {
-    const names = new Set<string>()
+    const names = new Set(spec.alternateSubmit ? [spec.alternateSubmit.name] : [])
     for (const field of spec.fields ?? []) {
       if (names.has(field.name)) throw new Error(`Duplicate dialog field: ${field.name}`)
       names.add(field.name)
@@ -175,6 +181,7 @@ function DialogView({
   const [values, setValues] = useState<FieldValues>(() => initialValues(spec.fields))
   const [error, setError] = useState<string | null>(null)
   const firstField = (spec.fields ?? []).find((f) => f.type !== 'info')?.name
+  const alternate = spec.alternateSubmit
 
   useEffect(() => {
     const onKey = (e: KeyboardEvent) => {
@@ -184,13 +191,13 @@ function DialogView({
     return () => window.removeEventListener('keydown', onKey)
   }, [onClose])
 
-  const submit = () => {
-    const err = spec.validate?.(values) ?? null
+  const submit = (result: FieldValues) => {
+    const err = spec.validate?.(result) ?? null
     if (err) {
       setError(err)
       return
     }
-    onClose(values)
+    onClose(result)
   }
 
   const set = (name: string, value: string | boolean) => setValues((v) => ({ ...v, [name]: value }))
@@ -205,10 +212,12 @@ function DialogView({
         onMouseDown={(e) => e.stopPropagation()}
         onSubmit={(e) => {
           e.preventDefault()
-          submit()
+          submit(values)
         }}
       >
-        <div className="px-4 py-3 border-b border-border font-semibold">{spec.title}</div>
+        <div className="px-4 py-3 border-b border-border font-semibold break-words">
+          {spec.title}
+        </div>
         <div className="px-4 py-3 flex flex-col gap-3">
           {spec.description && (
             <div className="text-fg-muted whitespace-pre-wrap break-words">{spec.description}</div>
@@ -308,11 +317,26 @@ function DialogView({
           {error && <div className="text-danger">{error}</div>}
         </div>
         <div className="px-4 py-3 border-t border-border flex justify-end gap-2">
-          <button type="button" className="btn btn-secondary" onClick={() => onClose(null)}>
+          {alternate && (
+            <button
+              type="button"
+              className="btn btn-danger mr-auto"
+              disabled={alternate.disabled?.(values)}
+              onClick={() => submit({ ...values, [alternate.name]: true })}
+            >
+              {alternate.label}
+            </button>
+          )}
+          <button
+            autoFocus={!firstField && spec.danger}
+            type="button"
+            className="btn btn-secondary"
+            onClick={() => onClose(null)}
+          >
             {spec.cancelLabel ?? 'Cancel'}
           </button>
           <button
-            autoFocus={!firstField}
+            autoFocus={!firstField && !spec.danger}
             type="submit"
             className={`btn ${spec.danger ? 'btn-danger' : ''}`}
           >

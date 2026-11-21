@@ -89,6 +89,10 @@ const TRACKED_ACTIONS = new Set<ActionName>([
   'unstageHunk',
 ])
 
+// Pull and Reset to remote both update the current branch from a remote.
+const pendingAction = (action: ActionName): ActionName =>
+  action === 'resetToRemote' ? 'pull' : action
+
 // oxlint-disable-next-line no-control-regex -- git forbids control characters in ref names
 const BRANCH_NAME_RE = /^(?!\/|.*(?:[/.]\.|\/\/|@\{|\\))[^\x00-\x1f\x7f ~^:?*[]+(?<!\.lock|[/.])$/
 
@@ -121,12 +125,13 @@ export function useRepoActions(
 
   return useMemo<RepoActions>(() => {
     const run: RepoActions['run'] = async (title, action, args, opts = {}) => {
-      if (!repo || inFlight.current.get(repo)?.has(action)) return false
+      const key = pendingAction(action)
+      if (!repo || inFlight.current.get(repo)?.has(key)) return false
       const updatePending = (running: boolean) => {
-        if (!TRACKED_ACTIONS.has(action)) return
+        if (!TRACKED_ACTIONS.has(key)) return
         const actions = new Set(inFlight.current.get(repo))
-        if (running) actions.add(action)
-        else actions.delete(action)
+        if (running) actions.add(key)
+        else actions.delete(key)
         const next = new Map(inFlight.current)
         if (actions.size) next.set(repo, actions)
         else next.delete(repo)
@@ -427,11 +432,17 @@ export function useRepoActions(
       }
       const up = data?.upstream?.name
       const defaults = trackingDefaults(current)
+      const remoteSelect = remoteField()
       const v = await dialog.open({
         title: `Pull into ${current ?? 'current branch'}`,
         description: up ? `Upstream: ${up}` : 'No upstream is configured for the current branch.',
         fields: [
-          { ...remoteField(), default: defaults.remote },
+          {
+            ...remoteSelect,
+            default:
+              remoteSelect.options.find((option) => option.value === defaults.remote)?.value ??
+              remoteSelect.default,
+          },
           {
             type: 'text',
             name: 'branch',
@@ -446,11 +457,34 @@ export function useRepoActions(
           },
         ],
         submitLabel: 'Pull',
+        alternateSubmit: {
+          name: 'resetToRemote',
+          label: 'Reset to remote',
+          disabled: (values) => !current || busy || !textValue(values, 'branch').trim(),
+        },
       })
       if (!v) return false
-      return run(`Pull ${textValue(v, 'remote')}/${textValue(v, 'branch')}`, 'pull', {
-        remote: textValue(v, 'remote'),
-        branch: textValue(v, 'branch'),
+      const remote = textValue(v, 'remote')
+      const branch = textValue(v, 'branch')
+      if (checkedValue(v, 'resetToRemote')) {
+        if (!current || activeRepoSession.current !== repoSession) return false
+        const remoteBranch = branch.trim()
+        const target = `${remote}/${remoteBranch}`
+        const confirmed = await dialog.confirm(
+          `Reset ${current} to ${target}?`,
+          'This discards staged and unstaged changes to tracked files and drops commits from this branch that are absent from the remote branch. It can also delete untracked files in the way.',
+          { submitLabel: 'Reset to remote', danger: true },
+        )
+        if (!confirmed || activeRepoSession.current !== repoSession) return false
+        return run(`Reset ${current} to ${target}`, 'resetToRemote', {
+          remote,
+          branch: remoteBranch,
+          localBranch: current,
+        })
+      }
+      return run(`Pull ${remote}/${branch}`, 'pull', {
+        remote,
+        branch,
         rebase: checkedValue(v, 'rebase'),
       })
     }
@@ -1312,7 +1346,7 @@ export function useRepoActions(
     }
 
     return {
-      isRunning: (action) => !!repo && !!pending.get(repo)?.has(action),
+      isRunning: (action) => !!repo && !!pending.get(repo)?.has(pendingAction(action)),
       run,
       commitMenu,
       refMenu,

@@ -1,3 +1,4 @@
+import { randomUUID } from 'node:crypto'
 import { rm } from 'node:fs/promises'
 import { join } from 'node:path'
 import { assertSafeArg, git, gitOrNull, gitOutput, optionalString } from './git.ts'
@@ -38,6 +39,34 @@ async function snapshotTracked(repo: string): Promise<string | undefined> {
     return (await git(repo, ['stash', 'create', 'embegrav: before reset'])).trim() || undefined
   } catch {
     return undefined
+  }
+}
+
+async function assertResetBranch(repo: string, expected: string): Promise<void> {
+  const [branch, busy] = await Promise.all([currentBranch(repo), operationInProgress(repo)])
+  if (branch !== expected) throw new Error(`Cannot reset: ${expected} is no longer checked out`)
+  if (busy) throw new Error('Cannot reset to remote while a Git operation is in progress')
+}
+
+async function resetHead(
+  repo: string,
+  { hash, mode }: ActionArgs['reset'],
+  expectedBranch?: string,
+): Promise<string | ActionOutcome> {
+  ref(hash, 'commit')
+  const [before, branch] = await Promise.all([headHash(repo), currentBranch(repo)])
+  const snapshot = mode === 'hard' ? await snapshotTracked(repo) : undefined
+  if (expectedBranch) await assertResetBranch(repo, expectedBranch)
+  const output = await gitOutput(repo, ['reset', `--${mode}`, hash])
+  if (!before) return output
+  return {
+    output,
+    undo: {
+      label: `Undo reset to ${hash.slice(0, 8)}`,
+      action: 'restoreHead',
+      // --keep moves back and refuses to clobber any intervening edits.
+      args: { hash: before, mode: mode === 'hard' ? 'keep' : mode, branch, snapshot },
+    },
   }
 }
 
@@ -110,6 +139,32 @@ const actions: Handlers = {
     if (remote) args.push(ref(remote, 'remote'))
     if (branch) args.push(ref(branch, 'branch'))
     return gitOutput(repo, args)
+  },
+  async resetToRemote(repo, a) {
+    const remote = ref(a.remote, 'remote')
+    const source = `refs/heads/${ref(a.branch, 'branch')}`
+    const branch = ref(a.localBranch, 'local branch')
+    await assertResetBranch(repo, branch)
+    await git(repo, ['remote', 'get-url', '--', remote])
+    await git(repo, ['check-ref-format', source])
+
+    // A private ref pins this fetch's result even if another fetch runs concurrently.
+    const target = `refs/embegrav/reset-to-remote/${randomUUID()}`
+    let hash: string
+    try {
+      await git(repo, [
+        'fetch',
+        '--no-tags',
+        '--no-write-fetch-head',
+        '--',
+        remote,
+        `${source}:${target}`,
+      ])
+      hash = (await git(repo, ['rev-parse', '--verify', `${target}^{commit}`])).trim()
+    } finally {
+      await git(repo, ['update-ref', '-d', target])
+    }
+    return resetHead(repo, { hash, mode: 'hard' }, branch)
   },
   async push(repo, a) {
     const args = ['push']
@@ -255,24 +310,7 @@ const actions: Handlers = {
     args.push(ref(a.hash, 'commit'))
     return gitOutput(repo, args)
   },
-  async reset(repo, a) {
-    const mode = a.mode
-    const hash = ref(a.hash, 'commit')
-    const [before, branch] = await Promise.all([headHash(repo), currentBranch(repo)])
-    const snapshot = mode === 'hard' ? await snapshotTracked(repo) : undefined
-    const output = await gitOutput(repo, ['reset', `--${mode}`, hash])
-    if (!before) return output
-    return {
-      output,
-      undo: {
-        label: `Undo reset to ${hash.slice(0, 8)}`,
-        action: 'restoreHead',
-        // After a hard reset the tracked files are clean, so --keep moves back
-        // safely and still refuses to clobber anything edited in the meantime.
-        args: { hash: before, mode: mode === 'hard' ? 'keep' : mode, branch, snapshot },
-      },
-    }
-  },
+  reset: (repo, a) => resetHead(repo, a),
   async restoreHead(repo, a) {
     const expected = optionalString(a.branch)
     const branch = await currentBranch(repo)

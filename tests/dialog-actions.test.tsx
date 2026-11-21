@@ -201,6 +201,33 @@ it('pulls and pushes the configured upstream in one click, asking only without o
   expect(api.action).not.toHaveBeenCalled()
 })
 
+it('requires confirmation before resetting to the remote and branch chosen in Pull options', async () => {
+  setup()
+  const openResetConfirmation = async () => {
+    fireEvent.click(screen.getByRole('button', { name: 'Open pull' }))
+    fireEvent.change(screen.getByLabelText('Remote'), { target: { value: 'upstream' } })
+    fireEvent.change(screen.getByLabelText('Remote branch'), { target: { value: 'release/main' } })
+    fireEvent.click(screen.getByRole('button', { name: 'Reset to remote' }))
+    await screen.findByText('Reset main to upstream/release/main?')
+  }
+
+  await openResetConfirmation()
+  const cancel = screen.getByRole('button', { name: 'No' })
+  expect(document.activeElement).toBe(cancel)
+  fireEvent.click(cancel)
+  expect(api.action).not.toHaveBeenCalled()
+
+  await openResetConfirmation()
+  expect(api.action).not.toHaveBeenCalled()
+  fireEvent.click(screen.getByRole('button', { name: 'Reset to remote' }))
+  await waitFor(() => expect(api.action).toHaveBeenCalledTimes(1))
+  expect(api.action).toHaveBeenCalledWith('/disposable/repo', 'resetToRemote', {
+    remote: 'upstream',
+    branch: 'release/main',
+    localBranch: 'main',
+  })
+})
+
 it.each(['Direct discard', 'Discard All Changes…'])(
   'keeps confirmation and untracked opt-in for %s',
   async (entry) => {

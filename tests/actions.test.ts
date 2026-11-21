@@ -135,6 +135,61 @@ describe('Git action outcomes', () => {
     )
   })
 
+  it('resets to the freshly fetched branch and keeps the existing hard reset undo', async () => {
+    await write('file.txt', 'remote\n')
+    await commit('remote commit')
+    const remoteTip = await git(repo, ['rev-parse', 'HEAD'])
+    const remote = join(repo, '.git', 'remote.git')
+    await git(repo, ['init', '--bare', remote])
+    await git(repo, ['push', remote, 'HEAD:refs/heads/release/main'])
+    await git(repo, ['remote', 'add', 'upstream', remote])
+
+    await write('file.txt', 'local commit\n')
+    await commit('local commit')
+    const localTip = await git(repo, ['rev-parse', 'HEAD'])
+    await git(repo, ['update-ref', 'refs/remotes/upstream/release/main', localTip.trim()])
+    await write('file.txt', 'staged\n')
+    await git(repo, ['add', 'file.txt'])
+    await write('file.txt', 'unstaged\n')
+    await write('untracked.txt', 'untracked\n')
+
+    const result = await runAction(repo, 'resetToRemote', {
+      remote: 'upstream',
+      branch: 'release/main',
+      localBranch: 'main',
+    })
+    expect(await git(repo, ['rev-parse', 'HEAD'])).toBe(remoteTip)
+    expect(await git(repo, ['rev-parse', 'refs/remotes/upstream/release/main'])).toBe(remoteTip)
+    expect(await git(repo, ['status', '--porcelain', '--untracked-files=no'])).toBe('')
+    expect(await read('file.txt')).toBe('remote\n')
+    expect(await read('untracked.txt')).toBe('untracked\n')
+
+    const request = decodeActionRequest({ repo, ...result.undo })
+    await runAction(request.repo, request.action, request.args)
+    expect(await git(repo, ['rev-parse', 'HEAD'])).toBe(localTip)
+    expect(await git(repo, ['show', ':file.txt'])).toBe('staged\n')
+    expect(await read('file.txt')).toBe('unstaged\n')
+  })
+
+  it('keeps the local branch and changes if the remote branch no longer exists', async () => {
+    await write('file.txt', 'remote\n')
+    await commit('base')
+    const remote = join(repo, '.git', 'remote.git')
+    await git(repo, ['init', '--bare', remote])
+    await git(repo, ['remote', 'add', 'origin', remote])
+    await git(repo, ['update-ref', 'refs/remotes/origin/main', 'HEAD'])
+    await write('file.txt', 'local commit\n')
+    await commit('local commit')
+    const localTip = await git(repo, ['rev-parse', 'HEAD'])
+    await write('file.txt', 'unstaged\n')
+
+    await expect(
+      runAction(repo, 'resetToRemote', { remote: 'origin', branch: 'main', localBranch: 'main' }),
+    ).rejects.toThrow(/couldn't find remote ref refs\/heads\/main/)
+    expect(await git(repo, ['rev-parse', 'HEAD'])).toBe(localTip)
+    expect(await read('file.txt')).toBe('unstaged\n')
+  })
+
   describe('undo', () => {
     const head = async () => (await git(repo, ['rev-parse', 'HEAD'])).trim()
     async function undo(result: Awaited<ReturnType<typeof runAction>>) {
