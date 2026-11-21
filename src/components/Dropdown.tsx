@@ -52,9 +52,8 @@ export function Dropdown({
       <button
         type="button"
         title={title}
-        className={`dropdown-trigger flex items-center gap-1 h-[26px] px-2 rounded border border-transparent ${
-          open ? 'border-focus' : ''
-        }`}
+        aria-expanded={open}
+        className="dropdown-trigger flex items-center gap-1 h-[26px] px-2 rounded"
         onClick={() => setOpen((o) => !o)}
         onContextMenu={(e) => {
           if (!onTriggerContextMenu) return

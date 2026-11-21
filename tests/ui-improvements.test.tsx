@@ -706,8 +706,8 @@ it('lists the repositories opened most often and recently first', async () => {
   const search = screen.getByRole('textbox', { name: 'Search repositories' })
   const addRepository = screen.getByRole('button', { name: 'Add repository…' })
   const heading = screen.getByRole('heading', { name: 'Recent repositories' })
-  expect(search.parentElement?.nextElementSibling).toBe(addRepository)
-  expect(addRepository.nextElementSibling?.nextElementSibling).toBe(heading)
+  expect(search.parentElement?.nextElementSibling?.firstElementChild).toBe(heading)
+  expect(addRepository.parentElement?.nextElementSibling).toBeNull()
   const recent = heading.nextElementSibling
   expect(recent?.textContent).toBe('Repo TT')
   expect(recent?.nextElementSibling?.textContent).toBe('Repo SS')
@@ -740,6 +740,7 @@ it('resets the repository highlight when filtering and ignores navigation with n
   fireEvent.keyDown(search, { key: 'ArrowUp' })
   fireEvent.keyDown(search, { key: 'Enter' })
   expect(screen.getByText('No matching repositories')).toBeTruthy()
+  expect(search.getAttribute('aria-invalid')).toBe('true')
   expect(document.querySelector('.dropdown-item.active')).toBeNull()
   expect(document.activeElement).toBe(search)
   fireEvent.change(search, { target: { value: 'Repo T' } })
@@ -1012,6 +1013,7 @@ it('ignores stale path checks and does not probe ordinary search text', async ()
     finish({ repo: { path: '/old', name: 'old' }, canInit: false, canClone: false }),
   )
   expect(screen.getByText('No Git repository at this path')).toBeTruthy()
+  expect(search.getAttribute('aria-invalid')).toBe('true')
   expect(screen.queryByRole('button', { name: /Add old/ })).toBeNull()
 })
 
@@ -1398,7 +1400,12 @@ it('searches branches and toggles remote branches from the branch filter', async
   )
   fireEvent.change(search, { target: { value: 'nope' } })
   expect(panel.getByText('No matching branches')).toBeTruthy()
-  fireEvent.change(search, { target: { value: '' } })
+  expect(search.getAttribute('aria-invalid')).toBe('true')
+  fireEvent.click(panel.getByRole('button', { name: 'Clear search' }))
+  expect((search as HTMLInputElement).value).toBe('')
+  expect(search.getAttribute('aria-invalid')).toBeNull()
+  expect(document.activeElement).toBe(search)
+  expect(panel.queryByRole('button', { name: 'Clear search' })).toBeNull()
   expect(panel.getByRole('button', { name: 'Local' }).getAttribute('aria-expanded')).toBe('false')
   await waitFor(() =>
     expect(api.graph).toHaveBeenLastCalledWith(

@@ -5,6 +5,7 @@ import IconChevronRight from '~icons/lucide/chevron-right'
 import IconFolder from '~icons/lucide/folder'
 import IconGitBranch from '~icons/lucide/git-branch'
 import { Dropdown } from './Dropdown'
+import { FilterInput } from './FilterInput'
 
 interface Props {
   data: GraphData | null
@@ -117,46 +118,50 @@ function BranchFilterPanel(
     />
   )
 
+  const remoteCount = [...remoteGroups.values()].reduce((n, group) => n + group.length, 0)
+  const nothingFound = localBranches.length === 0 && remoteGroups.size === 0
+
   return (
-    <div className="pb-1">
-      <div className="sticky top-0 z-10 px-2 pt-2 pb-1.5 bg-[var(--vscode-dropdown-background)] border-b border-border">
-        <input
-          ref={input}
-          type="text"
-          className="w-full"
-          placeholder="Search branches"
-          aria-label="Search branches"
-          value={query}
-          onChange={(e) => {
-            setQuery(e.target.value)
-            setSearchCollapsed(new Set())
-          }}
-          onKeyDown={(e) => {
-            if (e.key !== 'Enter') return
-            e.preventDefault()
-            const first = localBranches[0] ?? remoteGroups.values().next().value?.[0]
-            if (first) toggleBranch(first.name)
-          }}
-        />
-      </div>
-      <div className="px-2">
+    <div>
+      <FilterInput
+        ref={input}
+        placeholder="Search branches"
+        label="Search branches"
+        value={query}
+        invalid={!!needle && nothingFound}
+        onChange={(value) => {
+          setQuery(value)
+          setSearchCollapsed(new Set())
+        }}
+        onKeyDown={(e) => {
+          if (e.key !== 'Enter') return
+          e.preventDefault()
+          const first = localBranches[0] ?? remoteGroups.values().next().value?.[0]
+          if (first) toggleBranch(first.name)
+        }}
+      />
+      <div className="p-1">
         {!needle && (
-          <BranchCheckbox
-            name="All branches"
-            label="All branches"
-            checked={p.allSelected}
-            onChange={() => {
-              if (!p.allSelected) p.onBranchesChange(null)
-            }}
-          />
+          <>
+            <BranchCheckbox
+              name="All branches"
+              label="All branches"
+              checked={p.allSelected}
+              onChange={() => {
+                if (!p.allSelected) p.onBranchesChange(null)
+              }}
+            />
+            <div className="context-menu-sep mx-2!" role="separator" />
+          </>
         )}
         {(!needle || localBranches.length > 0) && (
-          <BranchGroup label="Local" {...groupState('local')}>
+          <BranchGroup label="Local" count={localBranches.length} {...groupState('local')}>
             {localBranches.map((ref) => branch(ref))}
           </BranchGroup>
         )}
         <BranchGroup
           label="Remote"
+          count={p.showRemote ? remoteCount : undefined}
           {...groupState('remote')}
           action={
             <button
@@ -165,8 +170,8 @@ function BranchFilterPanel(
               aria-label="Show remote branches"
               aria-checked={p.showRemote}
               title="Show remote branches"
-              className={`mr-1 flex h-4 w-7 shrink-0 items-center rounded-full border px-0.5 ${
-                p.showRemote ? 'justify-end border-accent bg-accent' : 'border-border bg-input'
+              className={`mr-1.5 flex h-4 w-7 shrink-0 items-center rounded-full px-[3px] transition-colors ${
+                p.showRemote ? 'justify-end bg-accent' : 'bg-bg-4'
               }`}
               onClick={() => p.onShowRemoteChange(!p.showRemote)}
             >
@@ -177,7 +182,13 @@ function BranchFilterPanel(
           }
         >
           {[...remoteGroups].map(([remote, branches]) => (
-            <BranchGroup key={remote} label={remote} folder {...groupState(`remote:${remote}`)}>
+            <BranchGroup
+              key={remote}
+              label={remote}
+              count={branches.length}
+              folder
+              {...groupState(`remote:${remote}`)}
+            >
               {branches.map((ref) =>
                 branch(
                   ref,
@@ -187,8 +198,8 @@ function BranchFilterPanel(
             </BranchGroup>
           ))}
         </BranchGroup>
-        {localBranches.length === 0 && remoteGroups.size === 0 && (
-          <div className="px-1.5 py-1 text-fg-dim">
+        {nothingFound && (
+          <div className="px-2 py-2 text-fg-muted">
             {needle ? 'No matching branches' : 'No branches'}
           </div>
         )}
@@ -199,6 +210,7 @@ function BranchFilterPanel(
 
 function BranchGroup({
   label,
+  count,
   folder,
   collapsed,
   onToggle,
@@ -206,6 +218,8 @@ function BranchGroup({
   children,
 }: {
   label: string
+  /** Number of branches in the group, shown muted after the label */
+  count?: number
   folder?: boolean
   collapsed: boolean
   onToggle: () => void
@@ -220,19 +234,29 @@ function BranchGroup({
       <div className="flex items-center gap-1">
         <button
           type="button"
-          className={`flex h-[26px] min-w-0 flex-1 items-center gap-1.5 rounded px-1.5 text-left ${hasChildren ? 'dropdown-item' : ''}`}
+          className={`flex h-7 min-w-0 flex-1 items-center gap-1.5 rounded-[5px] px-1.5 text-left ${hasChildren ? 'dropdown-item' : ''}`}
           aria-expanded={hasChildren ? expanded : undefined}
           disabled={!hasChildren}
           onClick={onToggle}
         >
           <Chevron className={`size-3 shrink-0 text-fg-muted ${hasChildren ? '' : 'invisible'}`} />
           {folder && <IconFolder className="size-3.5 shrink-0 text-fg-muted" />}
-          <span className="truncate">{label}</span>
+          <span className={folder ? 'truncate' : 'truncate font-semibold'}>{label}</span>
+          {!!count && (
+            <span className="ml-auto pl-2 text-xs tabular-nums text-fg-muted" aria-hidden>
+              {count}
+            </span>
+          )}
         </button>
         {action}
       </div>
       {expanded && (
-        <div role="group" aria-label={label} className="pl-5">
+        // The guide line runs under the group's chevron.
+        <div
+          role="group"
+          aria-label={label}
+          className="ml-[11px] border-l border-[color-mix(in_srgb,var(--vscode-foreground)_14%,transparent)] pl-1.5"
+        >
           {children}
         </div>
       )}
@@ -249,13 +273,13 @@ function BranchCheckbox(p: {
 }) {
   return (
     <label
-      className="dropdown-item flex h-[26px] cursor-pointer items-center gap-2 rounded px-1.5"
+      className="dropdown-item flex h-7 cursor-pointer items-center gap-2 rounded-[5px] px-1.5"
       title={p.name}
     >
       <input
         type="checkbox"
         aria-label={p.name}
-        className="size-4! shrink-0 checked:border-accent! checked:bg-accent! checked:text-accent-fg!"
+        className="size-3.5! shrink-0 rounded-[3px]! checked:border-accent! checked:bg-accent! checked:text-accent-fg!"
         checked={p.checked}
         onChange={p.onChange}
       />

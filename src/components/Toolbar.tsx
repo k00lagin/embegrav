@@ -8,6 +8,7 @@ import { useToast } from './Toast'
 import { Dropdown, DropdownItem } from './Dropdown'
 import { BranchFilter } from './BranchFilter'
 import { RepoIcon } from './RepoIcon'
+import { FilterInput } from './FilterInput'
 import IconFolderGit2 from '~icons/lucide/folder-git-2'
 import IconSearch from '~icons/lucide/search'
 import IconRefreshCw from '~icons/lucide/refresh-cw'
@@ -28,6 +29,7 @@ import IconGithub from '~icons/lucide/github'
 import IconTrash2 from '~icons/lucide/trash-2'
 import IconPencil from '~icons/lucide/pencil'
 import IconLoader from '~icons/lucide/loader-circle'
+import IconCheck from '~icons/lucide/check'
 
 export interface SearchState {
   query: string
@@ -103,7 +105,7 @@ export function Toolbar(p: Props) {
         }
         label={current?.name ?? 'Select repository'}
         title={current?.path ?? 'Repository'}
-        panelClassName="w-[360px] max-w-[calc(100vw-16px)] !min-w-0 overflow-x-hidden"
+        panelClassName="w-[380px] max-w-[calc(100vw-16px)] !min-w-0 overflow-x-hidden"
         contextMenuOpen={p.repoContextMenuOpen}
         onTriggerContextMenu={
           current ? (x, y) => p.onRepoContextMenu(current.path, x, y) : undefined
@@ -411,6 +413,7 @@ function RepositoryFilter(
   const toast = useToast()
   const input = useRef<HTMLInputElement>(null)
   const highlightedRow = useRef<HTMLDivElement>(null)
+  const footer = useRef<HTMLDivElement>(null)
   const path = query.trim().replace(/^(["'])(.*)\1$/, '$2')
   const isPath = /^(?:[a-zA-Z]:[\\/]|[\\/]|\.{1,2}[\\/])/.test(path)
   const checking = isPath && checked?.path !== path
@@ -525,10 +528,11 @@ function RepositoryFilter(
     const row = highlightedRow.current
     const panel = row?.closest<HTMLElement>('.dropdown-panel')
     const header = input.current?.parentElement
-    if (!row || !panel || !header) return
+    if (!row || !panel || !header || !footer.current) return
     const bounds = row.getBoundingClientRect()
+    // Keep the row clear of the sticky header and footer
     const top = header.getBoundingClientRect().bottom
-    const bottom = panel.getBoundingClientRect().bottom
+    const bottom = footer.current.getBoundingClientRect().top
     if (bounds.top < top) panel.scrollTop -= top - bounds.top
     else if (bounds.bottom > bottom) panel.scrollTop += bounds.bottom - bottom
     // oxlint-disable-next-line react/exhaustive-effect-dependencies -- selection and filtering move the highlighted row
@@ -541,7 +545,12 @@ function RepositoryFilter(
     if (option.kind !== 'repo') {
       return (
         <div key={option.key} ref={ref}>
-          <DropdownItem active={active} disabled={busy} onClick={() => choose(option)}>
+          <DropdownItem
+            className={ROW_CLASS}
+            active={active}
+            disabled={busy}
+            onClick={() => choose(option)}
+          >
             {submitting === option.key ? (
               spinner
             ) : option.kind === 'clone' ? (
@@ -549,14 +558,15 @@ function RepositoryFilter(
             ) : (
               <IconFolderPlus className="w-4 h-4 shrink-0" />
             )}
-            <span className="flex flex-col min-w-0" title={path}>
-              <span className="truncate">
-                {option.kind === 'clone'
+            <RowText
+              title={path}
+              name={
+                option.kind === 'clone'
                   ? `Clone ${option.match.fullName}`
-                  : `Initialize ${folderName}`}
-              </span>
-              <span className="text-xs opacity-60 truncate mono">{path}</span>
-            </span>
+                  : `Initialize ${folderName}`
+              }
+              detail={path}
+            />
           </DropdownItem>
         </div>
       )
@@ -583,7 +593,7 @@ function RepositoryFilter(
         }}
       >
         <DropdownItem
-          className="min-w-0"
+          className={ROW_CLASS}
           active={active}
           disabled={busy}
           onClick={() => choose(option)}
@@ -591,84 +601,102 @@ function RepositoryFilter(
           {adding &&
             (submitting === option.key ? spinner : <IconPlus className="w-4 h-4 shrink-0" />)}
           <RepoIcon repo={r} />
-          <span className="flex flex-col min-w-0" title={r.path}>
-            <span className="truncate">{adding ? `Add ${r.name}` : r.name}</span>
-            <span className="text-xs opacity-60 truncate mono">{r.path}</span>
-          </span>
+          <RowText title={r.path} name={adding ? `Add ${r.name}` : r.name} detail={r.path} />
+          {r.path === p.repo && (
+            <IconCheck
+              className={`ml-auto size-3.5 shrink-0 ${active ? '' : 'text-link'}`}
+              aria-hidden
+            />
+          )}
         </DropdownItem>
       </div>
     )
   }
 
+  const nothingFound = options.length === 0 && !checking && !checkingGitHub
+
   return (
-    <div className="pb-1 min-w-0 w-full">
-      <div className="sticky top-0 z-10 px-2 pt-2 pb-1.5 bg-[var(--vscode-dropdown-background)] border-b border-border">
-        <input
-          ref={input}
-          type="text"
-          className="w-full"
-          placeholder="Search repositories or paste a path"
-          aria-label="Search repositories"
-          value={query}
-          disabled={busy}
-          onChange={(e) => {
-            setQuery(e.target.value)
-            setHighlightedKey(null)
-          }}
-          onKeyDown={(e) => {
-            if (e.key === 'ArrowDown' || e.key === 'ArrowUp') {
-              e.preventDefault()
-              e.stopPropagation()
-              if (!options.length) return
-              const index = options.findIndex((o) => o.key === highlighted?.key)
-              const step = e.key === 'ArrowDown' ? 1 : -1
-              const next = (index + step + options.length) % options.length
-              setHighlightedKey(options[next].key)
-              return
-            }
-            if (e.key !== 'Enter') return
+    <div className="min-w-0 w-full">
+      <FilterInput
+        ref={input}
+        placeholder="Search repositories or paste a path"
+        label="Search repositories"
+        value={query}
+        invalid={!!needle && nothingFound}
+        disabled={busy}
+        onChange={(value) => {
+          setQuery(value)
+          setHighlightedKey(null)
+        }}
+        onKeyDown={(e) => {
+          if (e.key === 'ArrowDown' || e.key === 'ArrowUp') {
             e.preventDefault()
             e.stopPropagation()
-            if (highlighted) choose(highlighted)
-          }}
-        />
-      </div>
-      <DropdownItem
-        disabled={busy}
-        onClick={() => {
-          p.close()
-          p.onAddRepo()
+            if (!options.length) return
+            const index = options.findIndex((o) => o.key === highlighted?.key)
+            const step = e.key === 'ArrowDown' ? 1 : -1
+            const next = (index + step + options.length) % options.length
+            setHighlightedKey(options[next].key)
+            return
+          }
+          if (e.key !== 'Enter') return
+          e.preventDefault()
+          e.stopPropagation()
+          if (highlighted) choose(highlighted)
         }}
-      >
-        <IconPlus className="w-4 h-4" /> Add repository…
-      </DropdownItem>
-      <div className="context-menu-sep" role="separator" />
-      {recentRepos.length > 0 && (
-        <>
-          <h2 className="px-3 py-1 text-xs text-fg-dim uppercase">Recent repositories</h2>
-          {options.slice(0, recentRepos.length).map(renderOption)}
-          <div className="context-menu-sep" role="separator" />
-        </>
-      )}
-      {options.slice(recentRepos.length).map(renderOption)}
-      {(checking || checkingGitHub) && (
-        <div role="status" className="px-3 py-1 text-fg-dim flex items-center gap-2">
-          <IconLoader className="w-4 h-4 animate-spin" />{' '}
-          {checking ? 'Checking repository…' : `Looking for ${folderName} on GitHub…`}
-        </div>
-      )}
-      {options.length === 0 && !checking && !checkingGitHub && (
-        <div className="px-3 py-1 text-fg-dim">
-          {isPath
-            ? checked?.error
-              ? 'Could not check repository path'
-              : 'No Git repository at this path'
-            : needle
-              ? 'No matching repositories'
-              : 'No repositories'}
-        </div>
-      )}
+      />
+      <div className="p-1">
+        {recentRepos.length > 0 && (
+          <>
+            <h2 className="dropdown-heading">Recent repositories</h2>
+            {options.slice(0, recentRepos.length).map(renderOption)}
+            <div className="context-menu-sep mx-2!" role="separator" />
+          </>
+        )}
+        {options.slice(recentRepos.length).map(renderOption)}
+        {(checking || checkingGitHub) && (
+          <div role="status" className="flex items-center gap-2 px-2 py-2 text-fg-muted">
+            <IconLoader className="w-4 h-4 animate-spin" />{' '}
+            {checking ? 'Checking repository…' : `Looking for ${folderName} on GitHub…`}
+          </div>
+        )}
+        {nothingFound && (
+          <div className="px-2 py-2 text-fg-muted">
+            {isPath
+              ? checked?.error
+                ? 'Could not check repository path'
+                : 'No Git repository at this path'
+              : needle
+                ? 'No matching repositories'
+                : 'No repositories'}
+          </div>
+        )}
+      </div>
+      <div ref={footer} className="dropdown-footer">
+        <DropdownItem
+          className="rounded-[5px] px-2!"
+          disabled={busy}
+          onClick={() => {
+            p.close()
+            p.onAddRepo()
+          }}
+        >
+          <IconPlus className="w-4 h-4 text-fg-muted" /> Add repository…
+        </DropdownItem>
+      </div>
     </div>
+  )
+}
+
+const ROW_CLASS = 'min-w-0 gap-2.5! rounded-[5px] px-2!'
+
+/** A two-line list row label: the name, with a muted path below it */
+function RowText(p: { title: string; name: string; detail: string }) {
+  return (
+    <span className="flex min-w-0 flex-col" title={p.title}>
+      <span className="truncate">{p.name}</span>
+      <span className="mono truncate text-[11px] leading-4 opacity-65">{p.detail}</span>
+    </span>
   )
 }
 

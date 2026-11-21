@@ -298,12 +298,17 @@ input[type='radio']:disabled {
   width: 26px;
   height: 26px;
   border-radius: 4px;
-  background: transparent;
   border: none;
+}
+.icon-btn,
+.dropdown-trigger {
+  background: transparent;
   color: inherit;
 }
 .icon-btn:hover:not(:disabled),
-.icon-btn.active {
+.icon-btn.active,
+.dropdown-trigger:hover:not(:disabled),
+.dropdown-trigger[aria-expanded='true'] {
   background: var(--vscode-toolbar-hoverBackground);
 }
 
@@ -524,22 +529,58 @@ input[type='radio']:disabled {
   background: var(--vscode-dropdown-background);
   color: var(--vscode-dropdown-foreground);
   border: 1px solid var(--vscode-dropdown-border);
-  border-radius: 4px;
-  box-shadow: 0 4px 14px var(--vscode-widget-shadow);
+  border-radius: 6px;
+  box-shadow: 0 8px 24px var(--vscode-widget-shadow);
   max-height: 60vh;
   overflow-y: auto;
   min-width: 220px;
 }
 
-.dropdown-trigger {
+/* Search field heading a dropdown list (FilterInput) */
+.filter-input {
+  position: sticky;
+  top: 0;
+  z-index: 10;
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  height: 36px;
+  padding: 0 8px 0 12px;
   background: var(--vscode-dropdown-background);
-  color: var(--vscode-dropdown-foreground);
+  border-bottom: 1px solid var(--vscode-dropdown-border);
 }
-.dropdown-trigger:hover {
+.filter-input input[type='text'] {
+  flex: 1;
+  min-width: 0;
+  height: 100%;
+  padding: 0;
+  border: 0;
+  background: transparent;
+}
+.filter-input input[aria-invalid='true'] {
+  color: var(--vscode-errorForeground);
+}
+/* Sticky action row closing a dropdown list */
+.dropdown-footer {
+  position: sticky;
+  bottom: 0;
+  z-index: 10;
+  padding: 4px;
+  background: var(--vscode-dropdown-background);
+  border-top: 1px solid var(--vscode-dropdown-border);
+}
+.dropdown-heading {
+  padding: 8px 8px 4px;
+  font-size: 11px;
+  font-weight: 600;
+  color: var(--vscode-descriptionForeground);
+}
+
+.dropdown-item:hover {
+  /* Translucent, so it shows on the dropdown background of any theme */
   background: var(--vscode-toolbar-hoverBackground);
 }
 .dropdown-item.active,
-.dropdown-item:hover,
 .dropdown-item:focus-visible {
   background: var(--vscode-list-activeSelectionBackground);
   color: var(--vscode-list-activeSelectionForeground);
