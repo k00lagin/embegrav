@@ -1,7 +1,7 @@
 import { expect, it } from 'vitest'
 import { execFile, spawn } from 'node:child_process'
 import { once } from 'node:events'
-import { mkdtemp, readFile, readdir, rm } from 'node:fs/promises'
+import { mkdtemp, readFile, readdir, rm, writeFile } from 'node:fs/promises'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { fileURLToPath } from 'node:url'
@@ -16,6 +16,7 @@ it('serves the built UI outside the package directory and pairs only on explicit
   const entry = fileURLToPath(new URL('../bin/embegrav.js', import.meta.url))
   const env = { ...process.env, EMBEGRAV_HOME: home }
   await git(cwd, ['init', '-b', 'main'])
+  await writeFile(join(cwd, 'favicon.svg'), '<svg xmlns="http://www.w3.org/2000/svg"/>')
   const child = spawn(process.execPath, [entry, '--port', '0'], {
     cwd,
     env,
@@ -38,6 +39,7 @@ it('serves the built UI outside the package directory and pairs only on explicit
     expect(stdout).not.toContain('token')
     await expect(readdir(home)).rejects.toMatchObject({ code: 'ENOENT' })
     expect((await fetch(`${origin}/api/repos`)).status).toBe(401)
+    expect((await fetch(`${origin}/api/repos/icon`, { method: 'POST' })).status).toBe(401)
 
     const index = await fetch(origin, { headers: { 'Accept-Encoding': 'br' } })
     expect(index.status).toBe(200)
@@ -79,6 +81,15 @@ it('serves the built UI outside the package directory and pairs only on explicit
     })
     expect(repos.status).toBe(200)
     expect(await repos.json()).toMatchObject({ repos: [{ path: cwd }] })
+    const icon = await fetch(`${origin}/api/repos/icon`, {
+      method: 'POST',
+      headers: { Authorization: `Bearer ${session}`, 'Content-Type': 'application/json' },
+      body: JSON.stringify({ path: cwd }),
+    })
+    expect(icon.status).toBe(200)
+    expect(await icon.json()).toMatchObject({
+      icon: { file: 'favicon.svg', src: expect.stringMatching(/^data:image\/svg\+xml;base64,/) },
+    })
     expect(stderr).toBe('')
   } finally {
     if (child.exitCode === null && child.signalCode === null) {

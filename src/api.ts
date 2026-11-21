@@ -1,5 +1,6 @@
 import type { ActionArgs, ActionName } from '@shared/actions'
 import type { GitHubVia } from '@shared/github'
+import type { RepoIconImage } from '@shared/repo-icons'
 import type {
   ActionResult,
   CommitDetails,
@@ -51,7 +52,12 @@ export function onUnauthorized(listener: () => void): () => void {
   return () => unauthorizedListeners.delete(listener)
 }
 
-async function request<T>(method: string, url: string, body?: unknown): Promise<T> {
+async function request<T>(
+  method: string,
+  url: string,
+  body?: unknown,
+  signal?: AbortSignal,
+): Promise<T> {
   const session = getSession()
   const headers: Record<string, string> = {}
   if (body !== undefined) headers['content-type'] = 'application/json'
@@ -60,6 +66,7 @@ async function request<T>(method: string, url: string, body?: unknown): Promise<
     method,
     headers,
     body: body !== undefined ? JSON.stringify(body) : undefined,
+    ...(signal && { signal }),
   })
   const text = await res.text()
   let json: unknown = null
@@ -96,6 +103,14 @@ export const api = {
   checkSession: () => post<{ ok: true }>('/api/auth/session', {}),
   repos: () => request<{ repos: RepoInfo[] }>('GET', '/api/repos'),
   resolveRepo: (path: string) => post<ResolvedPath>('/api/repos/resolve', { path }),
+  repoIcon: (path: string, file?: string, skip?: string[], signal?: AbortSignal) =>
+    request<{ icon: RepoIconImage | null }>(
+      'POST',
+      '/api/repos/icon',
+      { path, file, skip },
+      signal,
+    ),
+  repoIconFiles: (path: string) => post<{ files: string[] }>('/api/repos/icon-files', { path }),
   capabilities: () => request<{ revealInFileExplorer: boolean }>('GET', '/api/capabilities'),
   addRepo: (path: string) => post<{ repos: RepoInfo[]; added: RepoInfo[] }>('/api/repos', { path }),
   initRepo: (path: string) =>

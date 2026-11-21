@@ -134,9 +134,13 @@ export function listRepos(): RepoInfo[] {
   return [...repos.values()].sort((a, b) => a.name.localeCompare(b.name))
 }
 
+export function registeredRepo(path: string): RepoInfo | undefined {
+  return repos.get(normalize(path))
+}
+
 export function getRepo(path: unknown): RepoInfo {
   if (typeof path !== 'string') throw new Error('repo is required')
-  const r = repos.get(normalize(path))
+  const r = registeredRepo(path)
   if (!r) throw new Error(`Unknown repository: ${path}`)
   return r
 }

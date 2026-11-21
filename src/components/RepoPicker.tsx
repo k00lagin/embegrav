@@ -3,9 +3,9 @@ import type { DirectoryListing } from '@shared/types'
 import { api } from '@/api'
 import { childPath, directoryPart, hasTrailingSeparator, parentPath } from '@/lib/paths'
 import { useToast } from './Toast'
+import { RepoIcon } from './RepoIcon'
 import IconX from '~icons/lucide/x'
 import IconFolder from '~icons/lucide/folder'
-import IconFolderGit from '~icons/lucide/folder-git-2'
 import IconFolderPlus from '~icons/lucide/folder-plus'
 import IconFolderUp from '~icons/lucide/folder-up'
 import IconLoader from '~icons/lucide/loader-circle'
@@ -213,7 +213,7 @@ export function RepoPicker({ initialPath, onSubmit, onInit, onClose }: Props) {
               onClick={() => setInput(childPath(input, entry.name))}
             >
               {entry.isRepo ? (
-                <IconFolderGit className="w-4 h-4 shrink-0 text-warning" />
+                <RepoIcon repo={entry} />
               ) : (
                 <IconFolder className="w-4 h-4 shrink-0 opacity-70" />
               )}

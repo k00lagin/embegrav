@@ -31,13 +31,16 @@ import {
 } from './repo.ts'
 import {
   cloneRepo,
+  findRepo,
   getRepo,
   initRepo,
   listRepos,
   registerPath,
+  registeredRepo,
   removeRepo,
   resolvePath,
 } from './repos.ts'
+import { listRepoIconFiles, resolveRepoIcon } from './repo-icons.ts'
 import { subscribe } from './watcher.ts'
 import { revealInFileExplorer, workingRevealPath } from './explorer.ts'
 import { isLocalRequest } from './local.ts'
@@ -185,6 +188,32 @@ api.post('/repos/resolve', async (c) => {
   if (typeof body.path !== 'string' || !body.path.trim())
     return c.json({ error: 'path is required' }, 400)
   return c.json(await resolvePath(body.path))
+})
+
+api.post('/repos/icon', async (c) => {
+  const { path, file, skip } = (await c.req.json()) as {
+    path?: unknown
+    file?: unknown
+    skip?: unknown
+  }
+  if (typeof path !== 'string' || !path.trim()) throw new Error('path is required')
+  if (file !== undefined && typeof file !== 'string') throw new Error('Invalid image path')
+  if (
+    skip !== undefined &&
+    (!Array.isArray(skip) || skip.length > 48 || skip.some((item) => typeof item !== 'string'))
+  ) {
+    throw new Error('Invalid image exclusions')
+  }
+  const repo = registeredRepo(path) ?? (await findRepo(path))
+  const icon = repo ? await resolveRepoIcon(repo.path, file, skip as string[] | undefined) : null
+  if (file !== undefined && !icon) throw new Error('Could not read this repository image')
+  c.header('Cache-Control', 'no-store')
+  return c.json({ icon })
+})
+
+api.post('/repos/icon-files', async (c) => {
+  const { path } = (await c.req.json()) as { path?: unknown }
+  return c.json({ files: await listRepoIconFiles(getRepo(path).path) })
 })
 
 api.post('/repos/init', async (c) => {

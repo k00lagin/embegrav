@@ -69,6 +69,7 @@ beforeEach(() => {
   )
   Element.prototype.scrollIntoView = () => {}
   vi.spyOn(api, 'repos').mockResolvedValue({ repos: [{ path: 'R', name: 'Repo R' }] })
+  vi.spyOn(api, 'repoIcon').mockResolvedValue({ icon: null })
   vi.spyOn(api, 'capabilities').mockResolvedValue({ revealInFileExplorer: true })
   vi.spyOn(api, 'graph').mockResolvedValue(graph)
   vi.spyOn(api, 'stats').mockResolvedValue({ stats: {} })
@@ -1084,7 +1085,7 @@ it('opens the selected repository menu from the switcher without opening the lis
     within(menu)
       .getAllByRole('menuitem')
       .map((item) => item.textContent),
-  ).toEqual(['Reveal in File Explorer', 'Copy Path', 'Remove from list'])
+  ).toEqual(['Repository settings…', 'Reveal in File Explorer', 'Copy Path', 'Remove from list'])
   expect(screen.queryByRole('textbox', { name: 'Search repositories' })).toBeNull()
   fireEvent.click(within(menu).getByRole('menuitem', { name: 'Copy Path' }))
   await waitFor(() => expect(writeText).toHaveBeenCalledWith('R'))
@@ -1100,6 +1101,7 @@ it.each(['F10', 'ContextMenu'])(
     const items = within(screen.getByRole('menu')).getAllByRole('menuitem')
     expect(document.activeElement).toBe(items[0])
     expect(items.map((item) => item.textContent)).toEqual([
+      'Repository settings…',
       'Reveal in File Explorer',
       'Copy Path',
       'Remove from list',
@@ -1127,6 +1129,85 @@ it('keeps the repository list open when the switcher trigger opens the current r
   fireEvent.click(screen.getByRole('menuitem', { name: 'Reveal in File Explorer' }))
   await waitFor(() => expect(reveal).toHaveBeenCalledWith('R'))
   expect(reveal).not.toHaveBeenCalledWith('S')
+})
+
+it('saves an icon for an inactive repository, restores it on reload and can reset it', async () => {
+  // jsdom does not provide the native dialog or image decoding methods.
+  const dialogPrototype = HTMLDialogElement.prototype
+  const imagePrototype = HTMLImageElement.prototype
+  Object.defineProperty(dialogPrototype, 'showModal', {
+    configurable: true,
+    value() {
+      this.open = true
+    },
+  })
+  Object.defineProperty(dialogPrototype, 'close', {
+    configurable: true,
+    value() {
+      this.open = false
+    },
+  })
+  Object.defineProperty(imagePrototype, 'decode', { configurable: true, value: async () => {} })
+  try {
+    vi.mocked(api.repos).mockResolvedValue({
+      repos: [
+        { path: 'R', name: 'Repo R' },
+        { path: 'S', name: 'Side project' },
+      ],
+    })
+    const file = 'brand/logo.svg'
+    const src = 'data:image/svg+xml;base64,PHN2Zy8+'
+    const anotherSrc = 'data:image/png;base64,iVBORw0KGgo='
+    vi.spyOn(api, 'repoIconFiles').mockResolvedValue({ files: ['another.svg', file] })
+    vi.mocked(api.repoIcon).mockImplementation(async (path, selected) => ({
+      icon:
+        path === 'S' && selected && ['another.svg', file].includes(selected)
+          ? { file: selected, src: selected === file ? src : anotherSrc }
+          : null,
+    }))
+    const settingsFor = (button: HTMLElement) => {
+      fireEvent.contextMenu(button)
+      fireEvent.click(screen.getByRole('menuitem', { name: 'Repository settings…' }))
+      return within(screen.getByRole('dialog', { name: 'Repository settings' }))
+    }
+    const app = render(<App />)
+    fireEvent.click(await screen.findByRole('button', { name: 'Repo R' }))
+    const repoRow = screen.getByText('Side project').closest('button')!
+    expect(repoRow.querySelector('[data-monogram]')?.getAttribute('data-monogram')).toBe('SP')
+    const panel = settingsFor(repoRow)
+    const anotherRow = (await panel.findByText('another.svg', { selector: '.mono' })).closest(
+      'button',
+    )!
+    const logoRow = panel.getByText('logo.svg').closest('button')!
+    await waitFor(() => {
+      expect(anotherRow.querySelector('img')?.getAttribute('src')).toBe(anotherSrc)
+      expect(logoRow.querySelector('img')?.getAttribute('src')).toBe(src)
+    })
+    expect(panel.queryByAltText('Icon preview')).toBeNull()
+    fireEvent.error(anotherRow.querySelector('img')!)
+    expect(anotherRow.querySelector('img')).toBeNull()
+    expect(anotherRow.querySelector('svg')).toBeTruthy()
+    const search = panel.getByRole('searchbox', { name: 'Search image files' })
+    fireEvent.change(search, { target: { value: 'brand' } })
+    fireEvent.keyDown(search, { key: 'Enter' })
+    expect((await panel.findByAltText('Icon preview')).getAttribute('src')).toBe(src)
+    fireEvent.click(panel.getByRole('button', { name: 'Save icon' }))
+    await waitFor(() => expect(repoRow.querySelector('img')?.getAttribute('src')).toBe(src))
+    expect(screen.getByRole('button', { name: 'Repo R' }).querySelector('img')).toBeNull()
+
+    fireEvent.click(repoRow)
+    app.unmount()
+    render(<App />)
+    const active = await screen.findByRole('button', { name: 'Side project' })
+    await waitFor(() => expect(active.querySelector('img')?.getAttribute('src')).toBe(src))
+    fireEvent.click(settingsFor(active).getByRole('button', { name: 'Use automatic' }))
+    expect(active.querySelector('[data-monogram]')?.getAttribute('data-monogram')).toBe('SP')
+  } finally {
+    cleanup()
+    Reflect.deleteProperty(dialogPrototype, 'showModal')
+    Reflect.deleteProperty(dialogPrototype, 'close')
+    Reflect.deleteProperty(imagePrototype, 'decode')
+  }
 })
 
 it('does not open a repository menu from the switcher when nothing is selected', async () => {

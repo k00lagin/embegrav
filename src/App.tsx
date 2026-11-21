@@ -29,6 +29,8 @@ import { DialogProvider, useDialog } from './components/Dialog'
 import { checkedValue, textValue } from './components/dialogValues'
 import type { DiffTarget } from './components/DiffViewer'
 import { RepoPicker } from './components/RepoPicker'
+import { RepoIconProvider } from './components/RepoIcon'
+import { RepoIconSettings } from './components/RepoIconSettings'
 import type { LabelTarget } from './components/RefLabel'
 import { SettingsPanel } from './components/SettingsPanel'
 import { ToastProvider, useToast } from './components/Toast'
@@ -46,6 +48,7 @@ import IconArchive from '~icons/lucide/archive'
 import IconFolderOpen from '~icons/lucide/folder-open'
 import IconCopy from '~icons/lucide/copy'
 import IconTrash2 from '~icons/lucide/trash-2'
+import IconSettings from '~icons/lucide/settings'
 
 const DEFAULT_SPLIT_WIDTH = 520
 const CommitDetails = lazy(() =>
@@ -68,7 +71,13 @@ export function App() {
     <ThemeProvider>
       <ToastProvider>
         <DialogProvider>
-          <AuthGate>{(link) => <Main initialRepo={link.repo} />}</AuthGate>
+          <AuthGate>
+            {(link) => (
+              <RepoIconProvider>
+                <Main initialRepo={link.repo} />
+              </RepoIconProvider>
+            )}
+          </AuthGate>
         </DialogProvider>
       </ToastProvider>
     </ThemeProvider>
@@ -191,6 +200,7 @@ function Main({ initialRepo }: { initialRepo: string | null }) {
   }, [repo])
 
   const [repoPickerOpen, setRepoPickerOpen] = useState(false)
+  const [repoSettings, setRepoSettings] = useState<RepoInfo | null>(null)
   const addRepo = () => setRepoPickerOpen(true)
   const submitRepo = async (path: string) => {
     const r = await api.addRepo(path)
@@ -532,11 +542,22 @@ function Main({ initialRepo }: { initialRepo: string | null }) {
     }
   }
   const onRepoContextMenu = (path: string, x: number, y: number) => {
+    const repository = repos.find((entry) => entry.path === path)
     setMenu({
       source: 'repository',
       x,
       y,
       items: [
+        ...(repository
+          ? [
+              {
+                label: 'Repository settings…',
+                icon: <IconSettings />,
+                onClick: () => setRepoSettings(repository),
+              },
+              'separator' as const,
+            ]
+          : []),
         {
           label: 'Reveal in File Explorer',
           icon: <IconFolderOpen />,
@@ -1165,6 +1186,9 @@ function Main({ initialRepo }: { initialRepo: string | null }) {
       </div>
 
       <ContextMenu menu={menu} onClose={() => setMenu(null)} />
+      {repoSettings && (
+        <RepoIconSettings repo={repoSettings} onClose={() => setRepoSettings(null)} />
+      )}
       {repoPickerOpen && (
         <RepoPicker
           initialPath={repo && parentPath(repo)}

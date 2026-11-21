@@ -7,6 +7,7 @@ import { api } from '@/api'
 import { useToast } from './Toast'
 import { Dropdown, DropdownItem } from './Dropdown'
 import { BranchFilter } from './BranchFilter'
+import { RepoIcon } from './RepoIcon'
 import IconFolderGit2 from '~icons/lucide/folder-git-2'
 import IconSearch from '~icons/lucide/search'
 import IconRefreshCw from '~icons/lucide/refresh-cw'
@@ -93,7 +94,13 @@ export function Toolbar(p: Props) {
   return (
     <div className="flex items-center gap-2 px-2 h-10 border-b border-border bg-bg-2 shrink-0 flex-wrap">
       <Dropdown
-        icon={<IconFolderGit2 className="w-4 h-4 shrink-0" />}
+        icon={
+          current ? (
+            <RepoIcon repo={current} eager />
+          ) : (
+            <IconFolderGit2 className="w-4 h-4 shrink-0" />
+          )
+        }
         label={current?.name ?? 'Select repository'}
         title={current?.path ?? 'Repository'}
         panelClassName="w-[360px] max-w-[calc(100vw-16px)] !min-w-0 overflow-x-hidden"
@@ -583,6 +590,7 @@ function RepositoryFilter(
         >
           {adding &&
             (submitting === option.key ? spinner : <IconPlus className="w-4 h-4 shrink-0" />)}
+          <RepoIcon repo={r} />
           <span className="flex flex-col min-w-0" title={r.path}>
             <span className="truncate">{adding ? `Add ${r.name}` : r.name}</span>
             <span className="text-xs opacity-60 truncate mono">{r.path}</span>
